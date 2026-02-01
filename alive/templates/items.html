@@ -1,0 +1,62 @@
+<div class="cards-container">
+    <h1>{{model_name|title}}</h1>
+
+    <div class="cards-list" id="cards-list" phx-hook="Sortable">
+        {% for item in items %}
+        <div class="card" id="card-{{item.id}}" data-card-id="{{item.id}}">
+            <div class="card-header">
+                <div class="drag-handle" title="Drag to reorder">&#9776;</div>
+
+                {% if item.title_editing %}
+                <div class="field-edit">
+                    <input type="text" name="value" value="{{item.title_editing_value}}" phx-keyup="update_draft" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}" autofocus />
+                    <div class="edit-buttons">
+                        <button phx-click="save_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}">Save</button>
+                        <button phx-click="cancel_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}">Cancel</button>
+                    </div>
+                </div>
+                {% else %}
+                {% if item.title_locked %}
+                <div class="field-display locked">
+                    <div class="title-content">{{item.title_html}}</div>
+                </div>
+                {% else %}
+                <div class="field-display" phx-click="start_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}">
+                    <div class="title-content">{{item.title_html}}</div>
+                </div>
+                {% endif %}
+                {% endif %}
+
+                <div class="move-buttons">
+                    <button phx-click="move_item" phx-value-item_id="{{item.id}}" phx-value-direction="-1" title="Move up">&#9650;</button>
+                    <button phx-click="move_item" phx-value-item_id="{{item.id}}" phx-value-direction="1" title="Move down">&#9660;</button>
+                </div>
+            </div>
+
+            {% for field in item.content_fields_data %}
+            <div class="card-body">
+                {% if field.is_editing %}
+                <div class="field-edit">
+                    <textarea name="value" phx-keyup="update_draft" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}" rows="3" autofocus>{{field.editing_value}}</textarea>
+                    <div class="edit-buttons">
+                        <button phx-click="save_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">Save</button>
+                        <button phx-click="cancel_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">Cancel</button>
+                    </div>
+                </div>
+                {% else %}
+                {% if field.is_locked %}
+                <div class="field-display locked">
+                    <div class="content-text">{{field.value_html}}</div>
+                </div>
+                {% else %}
+                <div class="field-display" phx-click="start_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">
+                    <div class="content-text">{{field.value_html}}</div>
+                </div>
+                {% endif %}
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+</div>

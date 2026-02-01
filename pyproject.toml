@@ -1,0 +1,14 @@
+[project]
+name = "pyview-cards"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "pyview-web",
+    "uvicorn",
+    "markdown",
+    "django>=5.0",
+    "asgiref",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

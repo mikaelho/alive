@@ -1,0 +1,78 @@
+<div class="cards-container">
+    <h1>Collaborative Cards</h1>
+
+    <div class="cards-list" id="cards-list" phx-hook="Sortable">
+        {% for card in cards %}
+        <div class="card" id="card-{{card.id}}" data-card-id="{{card.id}}">
+            <div class="card-header">
+                <!-- Drag handle -->
+                <div class="drag-handle" title="Drag to reorder">&#9776;</div>
+
+                <!-- Title field -->
+                {% if card.title_editing %}
+                    <div class="field-edit">
+                        <input
+                            type="text"
+                            name="value"
+                            value="{{card.title_editing_value}}"
+                            phx-keyup="update_draft"
+                            phx-value-card_id="{{card.id}}"
+                            phx-value-field="title"
+                            autofocus
+                        />
+                        <div class="edit-buttons">
+                            <button phx-click="save_edit" phx-value-card_id="{{card.id}}" phx-value-field="title">Save</button>
+                            <button phx-click="cancel_edit" phx-value-card_id="{{card.id}}" phx-value-field="title">Cancel</button>
+                        </div>
+                    </div>
+                {% else %}
+                    {% if card.title_locked %}
+                        <div class="field-display locked">
+                            <div class="title-content">{{card.title_html}}</div>
+                        </div>
+                    {% else %}
+                        <div class="field-display" phx-click="start_edit" phx-value-card_id="{{card.id}}" phx-value-field="title">
+                            <div class="title-content">{{card.title_html}}</div>
+                        </div>
+                    {% endif %}
+                {% endif %}
+
+                <!-- Move buttons -->
+                <div class="move-buttons">
+                    <button phx-click="move_card" phx-value-card_id="{{card.id}}" phx-value-direction="-1" title="Move up">&#9650;</button>
+                    <button phx-click="move_card" phx-value-card_id="{{card.id}}" phx-value-direction="1" title="Move down">&#9660;</button>
+                </div>
+            </div>
+
+            <div class="card-body">
+                {% if card.content_editing %}
+                    <div class="field-edit">
+                        <textarea
+                            name="value"
+                            phx-keyup="update_draft"
+                            phx-value-card_id="{{card.id}}"
+                            phx-value-field="content"
+                            rows="5"
+                            autofocus
+                        >{{card.content_editing_value}}</textarea>
+                        <div class="edit-buttons">
+                            <button phx-click="save_edit" phx-value-card_id="{{card.id}}" phx-value-field="content">Save</button>
+                            <button phx-click="cancel_edit" phx-value-card_id="{{card.id}}" phx-value-field="content">Cancel</button>
+                        </div>
+                    </div>
+                {% else %}
+                    {% if card.content_locked %}
+                        <div class="field-display locked">
+                            <div class="content-text">{{card.content_html}}</div>
+                        </div>
+                    {% else %}
+                        <div class="field-display" phx-click="start_edit" phx-value-card_id="{{card.id}}" phx-value-field="content">
+                            <div class="content-text">{{card.content_html}}</div>
+                        </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
