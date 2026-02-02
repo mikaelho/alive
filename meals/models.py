@@ -49,6 +49,7 @@ class Recipe(models.Model, AliveMixin):
         fields=("title", "description"),
         editable_fields=("title", "description"),
         title_field="title",
+        dive_to=("ingredients",),
     )
 
     title = models.CharField(max_length=200)

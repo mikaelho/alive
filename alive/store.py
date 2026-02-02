@@ -4,6 +4,11 @@ from typing import Any, Type
 from asgiref.sync import sync_to_async
 from django.db import models
 
+# Use thread_sensitive=False to avoid deadlock when called from handle_info
+def async_db(func):
+    """Wrapper for sync_to_async that avoids deadlocks."""
+    return sync_to_async(func, thread_sensitive=False)
+
 
 class DjangoDataStore:
     """
@@ -64,12 +69,15 @@ class DjangoDataStore:
 
     # Data access (Django ORM)
 
-    @sync_to_async
-    def get_items(self) -> list[models.Model]:
-        """Get all items."""
-        return list(self.model.objects.all())
+    @async_db
+    def get_items(self, filters: dict[str, Any] | None = None) -> list[models.Model]:
+        """Get all items, optionally filtered."""
+        qs = self.model.objects.all()
+        if filters:
+            qs = qs.filter(**filters)
+        return list(qs)
 
-    @sync_to_async
+    @async_db
     def get_item_by_id(self, item_id: str) -> models.Model | None:
         """Find an item by its ID."""
         try:
@@ -77,7 +85,7 @@ class DjangoDataStore:
         except (self.model.DoesNotExist, ValueError):
             return None
 
-    @sync_to_async
+    @async_db
     def get_field_value(self, item_id: str, field_name: str) -> Any | None:
         """Get the current value of a field."""
         try:
@@ -86,7 +94,7 @@ class DjangoDataStore:
         except (self.model.DoesNotExist, ValueError):
             return None
 
-    @sync_to_async
+    @async_db
     def set_field_value(self, item_id: str, field_name: str, value: Any) -> bool:
         """Set the value of a field. Returns True if successful."""
         try:
@@ -99,16 +107,49 @@ class DjangoDataStore:
 
     # Ordering (placeholder - not implemented yet)
 
-    @sync_to_async
+    @async_db
     def move_item(self, item_id: str, direction: int) -> bool:
         """Move an item up or down by direction. Not implemented yet."""
         # Would need a position field on the model to implement
         return False
 
-    @sync_to_async
+    @async_db
     def move_to_position(self, item_id: str, position: int) -> bool:
         """Move an item to a specific position. Not implemented yet."""
         return False
+
+    @async_db
+    def create_item(self, field_values: dict[str, Any]) -> models.Model | None:
+        """Create a new item with the given field values."""
+        try:
+            item = self.model(**field_values)
+            item.full_clean()
+            item.save()
+            return item
+        except Exception as e:
+            print(f"[alive] Error creating item: {e}")
+            return None
+
+    @async_db
+    def add_to_relation(self, item: models.Model, relation_field: str, related_pk: Any) -> bool:
+        """Add an item to a M2M relation on the related model."""
+        try:
+            # relation_field is like "recipes" - the related_name on the M2M field
+            # We need to find which model has the M2M field pointing to this model
+            for field in self.model._meta.get_fields():
+                if field.name == relation_field:
+                    # This is a reverse M2M relation
+                    if hasattr(field, 'related_model') and hasattr(field, 'field'):
+                        related_model = field.related_model
+                        related_obj = related_model.objects.get(pk=related_pk)
+                        # field.field is the actual M2M field on the related model
+                        m2m_field_name = field.field.name
+                        getattr(related_obj, m2m_field_name).add(item)
+                        return True
+            return False
+        except Exception as e:
+            print(f"[alive] Error adding to relation: {e}")
+            return False
 
 
 # Registry of stores by model

@@ -36,17 +36,27 @@ class ModelContext:
     session_id: str = ""
     editing: dict[str, str] = field(default_factory=dict)
     model_name: str = ""
+    model_name_singular: str = ""
     field_names: list[str] = field(default_factory=list)
     title_field: str = ""
     content_fields: list[str] = field(default_factory=list)
+    filters: dict[str, str] = field(default_factory=dict)
+    filter_description: str = ""
+    filter_back_url: str = ""
+    # Creation state
+    creating: bool = False
+    create_fields: list[dict] = field(default_factory=list)
+    create_values: dict[str, str] = field(default_factory=dict)
+    create_error: str = ""
 
 
-def create_model_liveview(model: Type[models.Model]) -> Type[LiveView]:
+def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive") -> Type[LiveView]:
     """
     Factory function to create a LiveView class for a Django model.
 
     Args:
         model: The Django model class (must have AliveMixin)
+        url_prefix: URL prefix for alive routes (for building dive links)
 
     Returns:
         A LiveView class configured for that model
@@ -60,6 +70,10 @@ def create_model_liveview(model: Type[models.Model]) -> Type[LiveView]:
     title_field = conf.get_title_field(fields)
     content_fields = [f for f in fields if f != title_field]
     model_name = model._meta.model_name
+    model_display_name = model._meta.verbose_name_plural.title()
+    model_display_name_singular = model._meta.verbose_name.title()
+    dive_relations = model.get_dive_relations(url_prefix)
+    create_fields = model.get_creatable_fields()
 
     class GeneratedModelLiveView(EditableFieldMixin, ItemMixin, LiveView[ModelContext]):
         """Auto-generated LiveView for a model."""
@@ -79,23 +93,90 @@ def create_model_liveview(model: Type[models.Model]) -> Type[LiveView]:
                 session["id"] = session_id
 
             editing: dict[str, str] = {}
-            items_data = await self._build_items_data(session_id, editing)
 
             # Content fields are all fields except the title field
             content_field_list = [f for f in fields if f != title_field]
 
+            # Initialize with empty filters - handle_params will set them
             socket.context = ModelContext(
-                items=items_data,
+                items=[],
                 session_id=session_id,
                 editing=editing,
-                model_name=model_name,
+                model_name=model_display_name,
+                model_name_singular=model_display_name_singular,
                 field_names=list(fields),
                 title_field=title_field or "",
                 content_fields=content_field_list,
+                filters={},
+                filter_description="",
             )
 
             if is_connected(socket):
                 await socket.subscribe(store.channel)
+
+        async def handle_params(self, url, params: dict, socket: LiveViewSocket[ModelContext]):
+            """Handle URL parameters for filtering."""
+            # Parse filter params from query string
+            filters = {}
+            filter_description = ""
+            filter_back_url = ""
+
+            for param, values in params.items():
+                # params values are lists from parse_qs
+                value = values[0] if isinstance(values, list) and values else values
+                if value:
+                    # Convert to ORM filter (e.g., recipes -> recipes__pk)
+                    filters[f"{param}__pk"] = value
+
+                    # Try to get the related object's name
+                    related_name = await self._get_related_object_name(param, value)
+                    if related_name:
+                        filter_description = f"For {related_name}"
+                        # Build back URL
+                        filter_back_url = self._get_back_url(param, value)
+                    else:
+                        filter_description = f"Filtered by {param}"
+
+            socket.context.filters = filters
+            socket.context.filter_description = filter_description
+            socket.context.filter_back_url = filter_back_url
+
+            # Now load the items with filters
+            socket.context.items = await self._build_items_data(
+                socket.context.session_id, socket.context.editing, filters
+            )
+
+        async def _get_related_object_name(self, relation_field: str, pk: str) -> str | None:
+            """Get the string representation of a related object."""
+            from asgiref.sync import sync_to_async
+
+            try:
+                # Find the related model from the relation field
+                for field in model._meta.get_fields():
+                    if field.name == relation_field:
+                        if hasattr(field, 'related_model'):
+                            related_model = field.related_model
+
+                            @sync_to_async(thread_sensitive=False)
+                            def get_obj():
+                                return related_model.objects.get(pk=pk)
+
+                            obj = await get_obj()
+                            return str(obj)
+            except Exception:
+                pass
+            return None
+
+        def _get_back_url(self, relation_field: str, pk: str) -> str:
+            """Build URL to go back to the related object's list."""
+            # Find the related model and build its URL
+            for field in model._meta.get_fields():
+                if field.name == relation_field:
+                    if hasattr(field, 'related_model'):
+                        related_model = field.related_model
+                        related_model_name = related_model._meta.model_name
+                        return f"{url_prefix}/{related_model_name}/"
+            return ""
 
         async def disconnect(self, socket: LiveViewSocket[ModelContext]):
             """Clean up locks when client disconnects."""
@@ -109,6 +190,67 @@ def create_model_liveview(model: Type[models.Model]) -> Type[LiveView]:
                 })
 
         async def handle_event(self, event: str, payload: dict[str, Any], socket: LiveViewSocket[ModelContext]):
+            # Handle creation events
+            if event == "start_create":
+                socket.context.creating = True
+                socket.context.create_fields = [
+                    {**f, "value": "", "autofocus": i == 0} for i, f in enumerate(create_fields)
+                ]
+                socket.context.create_values = {}
+                socket.context.create_error = ""
+                return
+
+            if event == "cancel_create":
+                socket.context.creating = False
+                socket.context.create_values = {}
+                socket.context.create_error = ""
+                return
+
+            if event == "update_create_field":
+                field_name = payload.get("field", "")
+                value = payload.get("value", "")
+                socket.context.create_values[field_name] = value
+                # Update the value in create_fields for template rendering
+                for f in socket.context.create_fields:
+                    if f["name"] == field_name:
+                        f["value"] = value
+                        break
+                return
+
+            if event == "save_create":
+                # Validate required fields
+                missing = []
+                for f in create_fields:
+                    if f["required"] and not socket.context.create_values.get(f["name"]):
+                        missing.append(f["label"])
+
+                if missing:
+                    socket.context.create_error = f"Required: {', '.join(missing)}"
+                    return
+
+                # Create the item
+                item = await store.create_item(socket.context.create_values)
+                if not item:
+                    socket.context.create_error = "Failed to create item"
+                    return
+
+                # If we have a filter (from diving), add to that relation
+                if socket.context.filters:
+                    for param, value in socket.context.filters.items():
+                        # param is like "recipes__pk", we need "recipes"
+                        relation_field = param.replace("__pk", "")
+                        await store.add_to_relation(item, relation_field, value)
+
+                # Reset creation state
+                socket.context.creating = False
+                socket.context.create_values = {}
+                socket.context.create_error = ""
+
+                # Refresh the list
+                await self._refresh_view_async(socket)
+                await self._broadcast_change(socket)
+                return
+
             # Try field events first
             if await self.handle_field_event(event, payload, socket):
                 return
@@ -145,20 +287,30 @@ def create_model_liveview(model: Type[models.Model]) -> Type[LiveView]:
         async def _refresh_view_async(self, socket: LiveViewSocket[ModelContext]):
             """Async refresh the items data in context."""
             socket.context.items = await self._build_items_data(
-                socket.context.session_id, socket.context.editing
+                socket.context.session_id, socket.context.editing, socket.context.filters
             )
 
         async def _broadcast_change(self, socket: LiveViewSocket[ModelContext]):
             """Broadcast state change to other clients."""
             await socket.broadcast(store.channel, {"action": "state_changed"})
 
-        async def _build_items_data(self, session_id: str, editing: dict[str, str]) -> list[dict]:
+        async def _build_items_data(self, session_id: str, editing: dict[str, str], filters: dict | None = None) -> list[dict]:
             """Build the items data for the template."""
-            items = await store.get_items()
-            return [
-                render_item_data(item, fields, session_id, editing, store, title_field, content_fields)
-                for item in items
-            ]
+            items = await store.get_items(filters)
+            result = []
+            for item in items:
+                item_data = render_item_data(item, fields, session_id, editing, store, title_field, content_fields)
+                # Add dive buttons
+                item_data["dive_buttons"] = [
+                    {
+                        "label": rel["label"],
+                        "url": f"{rel['target_url']}?{rel['filter_param']}={item.pk}",
+                    }
+                    for rel in dive_relations
+                    if rel["filter_param"]  # Only include if we can filter
+                ]
+                result.append(item_data)
+            return result
 
     # Set a meaningful name for debugging
     GeneratedModelLiveView.__name__ = f"{model.__name__}LiveView"

@@ -14,12 +14,14 @@ class AliveConf:
         editable_fields: Fields that can be edited (default: same as fields, minus id/pk)
         title_field: Field to use as the card/row title (default: 'name' or 'title' or first CharField)
         list_fields: Fields to show in list/table view (default: same as fields)
+        dive_to: Relation field names to show "dive" buttons for (navigates to related objects)
     """
 
     fields: Sequence[str] = ()
     editable_fields: Sequence[str] | None = None
     title_field: str | None = None
     list_fields: Sequence[str] | None = None
+    dive_to: Sequence[str] = ()
 
     def get_editable_fields(self) -> Sequence[str]:
         """Get editable fields, defaulting to fields minus common non-editable ones."""

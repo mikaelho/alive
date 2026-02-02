@@ -67,7 +67,7 @@ def setup_alive(app, url_prefix: str = "/alive"):
     for model in apps.get_models():
         if issubclass(model, AliveMixin):
             # Create LiveView for this model
-            view_class = create_model_liveview(model)
+            view_class = create_model_liveview(model, url_prefix)
 
             # Register route
             model_name = model._meta.model_name
