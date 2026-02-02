@@ -1,4 +1,4 @@
-"""Main entry point for the PyView cards application."""
+"""Main entry point for the PyView application with Alive module."""
 
 import os
 import sys
@@ -21,14 +21,11 @@ import uvicorn
 # Import alive module
 from alive import setup_alive, set_event_loop
 
-# Keep the old manual view for comparison (can be removed later)
-from views.cards.cards import CardsLiveView
-
 
 def custom_root_template(context: RootTemplateContext) -> str:
     """Custom root template that loads hooks before app.js."""
     suffix = " | LiveView"
-    title = context.get("title") or "Collaborative Cards"
+    title = context.get("title") or "Alive"
     render_title = (title + suffix) if title else "LiveView"
 
     additional_head_elements = "\n".join(context["additional_head_elements"])
@@ -51,10 +48,10 @@ def custom_root_template(context: RootTemplateContext) -> str:
       <meta charset="utf-8">
       <meta http-equiv="X-UA-Compatible" content="IE=edge">
       <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-      <link rel="stylesheet" href="/app-static/css/cards.css">
+      <link rel="stylesheet" href="/django-static/alive/css/alive.css">
       <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
-      <script src="/app-static/js/dragdrop.js"></script>
-      <script src="/app-static/js/keyboard.js"></script>
+      <script src="/django-static/alive/js/dragdrop.js"></script>
+      <script src="/django-static/alive/js/keyboard.js"></script>
       <script defer type="text/javascript" src="/static/assets/app.js"></script>
       {additional_head_elements}
     </head>
@@ -85,10 +82,7 @@ def create_app():
     # Mount PyView's static assets
     app.mount("/static", StaticFiles(packages=[("pyview", "static")]), name="static")
 
-    # Mount app's static assets (JS utilities, etc.)
-    app.mount("/app-static", StaticFiles(directory="static"), name="app-static")
-
-    # Mount Django static files for admin
+    # Mount Django static files (includes alive module assets)
     app.mount("/django-static", StaticFiles(directory="staticfiles"), name="django-static")
 
     # Mount Django admin via WSGI middleware
@@ -97,9 +91,6 @@ def create_app():
 
     # Setup Alive - auto-discovers models with AliveMixin and registers routes
     setup_alive(app, url_prefix="/alive")
-
-    # Also keep the manual route at root for comparison
-    app.add_live_view("/", CardsLiveView)
 
     return app
 
