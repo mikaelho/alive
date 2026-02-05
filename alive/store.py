@@ -151,6 +151,17 @@ class DjangoDataStore:
             print(f"[alive] Error adding to relation: {e}")
             return False
 
+    @async_db
+    def delete_item(self, item_id: str) -> bool:
+        """Delete an item by its ID. Returns True if successful."""
+        try:
+            item = self.model.objects.get(pk=int(item_id))
+            item.delete()
+            return True
+        except (self.model.DoesNotExist, ValueError, Exception) as e:
+            print(f"[alive] Error deleting item: {e}")
+            return False
+
 
 # Registry of stores by model
 _stores: dict[Type[models.Model], DjangoDataStore] = {}

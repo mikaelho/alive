@@ -41,8 +41,8 @@ class ModelContext:
     title_field: str = ""
     content_fields: list[str] = field(default_factory=list)
     filters: dict[str, str] = field(default_factory=dict)
-    filter_description: str = ""
-    filter_back_url: str = ""
+    # Breadcrumb navigation: list of {"label": str, "url": str or None}
+    breadcrumbs: list[dict] = field(default_factory=list)
     # Creation state
     creating: bool = False
     create_fields: list[dict] = field(default_factory=list)
@@ -108,7 +108,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 title_field=title_field or "",
                 content_fields=content_field_list,
                 filters={},
-                filter_description="",
+                breadcrumbs=[],
             )
 
             if is_connected(socket):
@@ -118,8 +118,11 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
             """Handle URL parameters for filtering."""
             # Parse filter params from query string
             filters = {}
-            filter_description = ""
-            filter_back_url = ""
+
+            # Build breadcrumbs
+            breadcrumbs = [
+                {"label": "Home", "url": f"{url_prefix}/"},
+            ]
 
             for param, values in params.items():
                 # params values are lists from parse_qs
@@ -128,18 +131,22 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     # Convert to ORM filter (e.g., recipes -> recipes__pk)
                     filters[f"{param}__pk"] = value
 
-                    # Try to get the related object's name
+                    # Add parent model to breadcrumbs
+                    parent_url = self._get_back_url(param, value)
+                    parent_model_name = self._get_related_model_name(param)
+                    if parent_url and parent_model_name:
+                        breadcrumbs.append({"label": parent_model_name, "url": parent_url})
+
+                    # Add the specific parent item
                     related_name = await self._get_related_object_name(param, value)
                     if related_name:
-                        filter_description = f"For {related_name}"
-                        # Build back URL
-                        filter_back_url = self._get_back_url(param, value)
-                    else:
-                        filter_description = f"Filtered by {param}"
+                        breadcrumbs.append({"label": related_name, "url": None})
+
+            # Current model (no link - we're here)
+            breadcrumbs.append({"label": model_display_name, "url": None if filters else None})
 
             socket.context.filters = filters
-            socket.context.filter_description = filter_description
-            socket.context.filter_back_url = filter_back_url
+            socket.context.breadcrumbs = breadcrumbs
 
             # Now load the items with filters
             socket.context.items = await self._build_items_data(
@@ -176,6 +183,14 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                         related_model = field.related_model
                         related_model_name = related_model._meta.model_name
                         return f"{url_prefix}/{related_model_name}/"
+            return ""
+
+        def _get_related_model_name(self, relation_field: str) -> str:
+            """Get the plural display name of a related model."""
+            for field in model._meta.get_fields():
+                if field.name == relation_field:
+                    if hasattr(field, 'related_model'):
+                        return field.related_model._meta.verbose_name_plural.title()
             return ""
 
         async def disconnect(self, socket: LiveViewSocket[ModelContext]):
@@ -249,6 +264,19 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 # Refresh the list
                 await self._refresh_view_async(socket)
                 await self._broadcast_change(socket)
+                return
+
+            if event == "delete_item":
+                item_id = payload.get("item_id", "")
+                if item_id:
+                    # Release any locks on this item
+                    store.release_all_locks(socket.context.session_id)
+
+                    # Delete the item
+                    success = await store.delete_item(item_id)
+                    if success:
+                        await self._refresh_view_async(socket)
+                        await socket.broadcast(store.channel, {"action": "item_deleted"})
                 return
 
             # Try field events first

@@ -1,128 +1,134 @@
-<div class="cards-container">
-    <div class="list-header">
-        <h1>{{model_name}}</h1>
-        {% if not creating %}
-        <button class="add-button" phx-click="start_create">+ Add</button>
-        {% endif %}
-    </div>
-    {% if filter_description %}
-    <div class="filter-bar">
-        {% if filter_back_url %}
-        <a href="javascript:history.back()" class="filter-description filter-link">&larr; {{filter_description}}</a>
-        {% else %}
-        <span class="filter-description">{{filter_description}}</span>
-        {% endif %}
-        <a href="?" class="clear-filter">Show all</a>
+<div class="container mx-auto p-4 max-w-4xl">
+    {% if breadcrumbs %}
+    <div class="text-sm breadcrumbs mb-4">
+        <ul>
+            {% for crumb in breadcrumbs %}
+            <li>
+                {% if crumb.url %}
+                <a href="{{crumb.url}}" class="link">{{crumb.label}}</a>
+                {% else %}
+                <span>{{crumb.label}}</span>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
     </div>
     {% endif %}
 
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold">{{model_name}}</h1>
+        {% if not creating %}
+        <button class="btn btn-primary" phx-click="start_create">+ Add</button>
+        {% endif %}
+    </div>
+
     {% if creating %}
-    <div class="card create-card">
-        <div class="card-header">
-            <div class="title-content"><p>New {{model_name_singular}}</p></div>
-        </div>
-        <div class="card-body create-form" phx-hook="AutoFocus">
+    <div class="card bg-base-100 shadow-xl border-2 border-primary mb-4">
+        <div class="card-body create-form" id="create-form" phx-hook="AutoFocus">
+            <h2 class="card-title">New {{model_name_singular}}</h2>
             {% if create_error %}
-            <div class="create-error">{{create_error}}</div>
+            <div class="alert alert-error">{{create_error}}</div>
             {% endif %}
             {% for field in create_fields %}
-            <div class="create-field">
-                <label for="create-{{field.name}}">
-                    {{field.label}}{% if field.required %} *{% endif %}
+            <div class="form-control w-full">
+                <label class="label">
+                    <span class="label-text">{{field.label}}{% if field.required %} *{% endif %}</span>
                 </label>
                 {% if field.field_type == 'textarea' %}
-                <textarea id="create-{{field.name}}" name="{{field.name}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" rows="3" autocomplete="off">{{field.value}}</textarea>
+                <textarea class="textarea textarea-bordered" name="{{field.name}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" rows="3" autocomplete="off">{{field.value}}</textarea>
                 {% elif field.field_type == 'select' %}
-                <select id="create-{{field.name}}" name="{{field.name}}" phx-change="update_create_field" phx-value-field="{{field.name}}">
+                <select class="select select-bordered" name="{{field.name}}" phx-change="update_create_field" phx-value-field="{{field.name}}">
                     <option value="">-- Select --</option>
                     {% for choice in field.choices %}
                     <option value="{{choice.0}}">{{choice.1}}</option>
                     {% endfor %}
                 </select>
                 {% elif field.field_type == 'checkbox' %}
-                <input type="checkbox" id="create-{{field.name}}" name="{{field.name}}" phx-change="update_create_field" phx-value-field="{{field.name}}" {% if field.value %}checked{% endif %} />
+                <input type="checkbox" class="checkbox" name="{{field.name}}" phx-change="update_create_field" phx-value-field="{{field.name}}" {% if field.value %}checked{% endif %} />
                 {% elif field.field_type == 'date' %}
-                <input type="date" id="create-{{field.name}}" name="{{field.name}}" value="{{field.value}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" />
+                <input type="date" class="input input-bordered" name="{{field.name}}" value="{{field.value}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" />
                 {% elif field.field_type == 'number' %}
-                <input type="number" id="create-{{field.name}}" name="{{field.name}}" value="{{field.value}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" autocomplete="off" />
+                <input type="number" class="input input-bordered" name="{{field.name}}" value="{{field.value}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" autocomplete="off" />
                 {% else %}
-                <input type="text" id="create-{{field.name}}" name="{{field.name}}" value="{{field.value}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" autocomplete="off" />
+                <input type="text" class="input input-bordered" name="{{field.name}}" value="{{field.value}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" autocomplete="off" />
                 {% endif %}
             </div>
             {% endfor %}
-            <div class="edit-buttons">
-                <button phx-click="save_create">Create</button>
-                <button phx-click="cancel_create">Cancel</button>
+            <div class="card-actions justify-end mt-4">
+                <button class="btn btn-ghost" phx-click="cancel_create">Cancel</button>
+                <button class="btn btn-primary" phx-click="save_create">Create</button>
             </div>
         </div>
     </div>
     {% endif %}
 
-    <div class="cards-list" id="cards-list" phx-hook="Sortable">
+    <div class="space-y-4" id="cards-list" phx-hook="Sortable">
         {% for item in items %}
-        <div class="card" id="card-{{item.id}}" data-card-id="{{item.id}}">
-            <div class="card-header">
-                <div class="drag-handle" title="Drag to reorder">&#9776;</div>
-
-                {% if item.title_editing %}
-                <div class="field-edit" id="edit-{{item.id}}-{{item.title_field_name}}" phx-hook="AutoFocus">
-                    <input type="text" name="value" value="{{item.title_editing_value}}" phx-keyup="update_draft" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}" autocomplete="off" />
-                    <div class="edit-buttons">
-                        <button phx-click="save_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}">Save</button>
-                        <button phx-click="cancel_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}">Cancel</button>
-                    </div>
-                </div>
-                {% else %}
-                {% if item.title_locked %}
-                <div class="field-display locked">
-                    <div class="title-content">{{item.title_html}}</div>
-                </div>
-                {% else %}
-                <div class="field-display" phx-click="start_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}">
-                    <div class="title-content">{{item.title_html}}</div>
-                </div>
-                {% endif %}
-                {% endif %}
-
-                <div class="move-buttons">
-                    <button phx-click="move_item" phx-value-item_id="{{item.id}}" phx-value-direction="-1" title="Move up">&#9650;</button>
-                    <button phx-click="move_item" phx-value-item_id="{{item.id}}" phx-value-direction="1" title="Move down">&#9660;</button>
-                </div>
-            </div>
-
-            {% for field in item.content_fields_data %}
+        <div class="card bg-base-100 shadow-xl" id="card-{{item.id}}" data-card-id="{{item.id}}">
             <div class="card-body">
-                {% if field.is_editing %}
-                <div class="field-edit" id="edit-{{item.id}}-{{field.name}}" phx-hook="AutoFocus">
-                    <textarea name="value" phx-keyup="update_draft" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}" rows="3">{{field.editing_value}}</textarea>
-                    <div class="edit-buttons">
-                        <button phx-click="save_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">Save</button>
-                        <button phx-click="cancel_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">Cancel</button>
+                <div class="flex items-center gap-2">
+                    <div class="cursor-grab text-base-content/40 hover:text-base-content drag-handle">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" />
+                        </svg>
                     </div>
-                </div>
-                {% else %}
-                {% if field.is_locked %}
-                <div class="field-display locked">
-                    <div class="content-text">{{field.value_html}}</div>
-                </div>
-                {% else %}
-                <div class="field-display" phx-click="start_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">
-                    <div class="content-text">{{field.value_html}}</div>
-                </div>
-                {% endif %}
-                {% endif %}
-            </div>
-            {% endfor %}
 
-            {% if item.dive_buttons %}
-            <div class="card-footer">
-                <div class="dive-buttons">
+                    {% if item.title_editing %}
+                    <div class="field-edit flex-1" id="edit-{{item.id}}-{{item.title_field_name}}" phx-hook="AutoFocus">
+                        <input type="text" class="input input-bordered input-primary w-full" name="value" value="{{item.title_editing_value}}" phx-keyup="update_draft" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}" autocomplete="off" />
+                        <div class="flex gap-2 mt-2">
+                            <button class="btn btn-primary btn-sm" phx-click="save_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}">Save</button>
+                            <button class="btn btn-ghost btn-sm" phx-click="cancel_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}">Cancel</button>
+                        </div>
+                    </div>
+                    {% else %}
+                    {% if item.title_locked %}
+                    <h2 class="card-title flex-1 opacity-50 cursor-not-allowed">{{item.title_html}}</h2>
+                    {% else %}
+                    <h2 class="card-title flex-1 cursor-pointer hover:text-primary" phx-click="start_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{item.title_field_name}}">{{item.title_html}}</h2>
+                    {% endif %}
+
+                    <div class="dropdown dropdown-end">
+                        <label tabindex="0" class="btn btn-ghost btn-sm btn-square">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                            </svg>
+                        </label>
+                        <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-40 z-10">
+                            <li><a id="delete-{{item.id}}" class="text-error" phx-hook="ConfirmClick" data-confirm="Delete this item?" phx-click="delete_item" phx-value-item_id="{{item.id}}">Delete</a></li>
+                        </ul>
+                    </div>
+                    {% endif %}
+                </div>
+
+                {% for field in item.content_fields_data %}
+                <div class="mt-4">
+                    {% if field.is_editing %}
+                    <div class="field-edit" id="edit-{{item.id}}-{{field.name}}" phx-hook="AutoFocus">
+                        <textarea class="textarea textarea-bordered textarea-primary w-full" name="value" phx-keyup="update_draft" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}" rows="3">{{field.editing_value}}</textarea>
+                        <div class="flex gap-2 mt-2">
+                            <button class="btn btn-primary btn-sm" phx-click="save_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">Save</button>
+                            <button class="btn btn-ghost btn-sm" phx-click="cancel_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">Cancel</button>
+                        </div>
+                    </div>
+                    {% else %}
+                    {% if field.is_locked %}
+                    <div class="prose opacity-50 cursor-not-allowed">{{field.value_html}}</div>
+                    {% else %}
+                    <div class="prose cursor-pointer hover:bg-base-200 p-2 -m-2 rounded" phx-click="start_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">{{field.value_html}}</div>
+                    {% endif %}
+                    {% endif %}
+                </div>
+                {% endfor %}
+
+                {% if item.dive_buttons %}
+                <div class="card-actions justify-end mt-4">
                     {% for btn in item.dive_buttons %}
-                    <a href="{{btn.url}}" class="dive-button">{{btn.label}} &rarr;</a>
+                    <a href="{{btn.url}}" class="btn btn-outline btn-sm">{{btn.label}} &rarr;</a>
                     {% endfor %}
                 </div>
+                {% endif %}
             </div>
-            {% endif %}
         </div>
         {% endfor %}
     </div>

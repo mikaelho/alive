@@ -99,6 +99,18 @@ window.Hooks.AutoFocus = {
     }
 };
 
+window.Hooks.ConfirmClick = {
+    mounted() {
+        this.el.addEventListener('click', (e) => {
+            const message = this.el.dataset.confirm || 'Are you sure?';
+            if (!confirm(message)) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        }, true);  // Use capture to run before phx-click
+    }
+};
+
 // Auto-initialize when DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initKeyboardShortcuts);
