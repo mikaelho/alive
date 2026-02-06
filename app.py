@@ -19,7 +19,7 @@ from django.core.wsgi import get_wsgi_application
 import uvicorn
 
 # Import alive module
-from alive import setup_alive, set_event_loop
+from alive import setup_alive, set_event_loop, get_registered_models
 
 
 def custom_root_template(context: RootTemplateContext) -> str:
@@ -29,6 +29,13 @@ def custom_root_template(context: RootTemplateContext) -> str:
     render_title = (title + suffix) if title else "LiveView"
 
     additional_head_elements = "\n".join(context["additional_head_elements"])
+
+    # Build sidebar menu from registered models
+    models = get_registered_models()
+    sidebar_items = "\n".join([
+        f'<li><a href="{m["url"]}">{m["title"]}</a></li>'
+        for m in models
+    ])
 
     main_content = f"""
       <div
@@ -40,20 +47,26 @@ def custom_root_template(context: RootTemplateContext) -> str:
         {context["content"]}
     </div>"""
 
-    header = """
-      <div class="navbar bg-base-100 shadow-sm mb-4">
+    navbar = """
+      <div class="navbar bg-base-100 shadow mb-4">
         <div class="flex-1">
+          <label for="alive-drawer" class="btn btn-ghost lg:hidden">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </label>
           <a href="/alive/" class="btn btn-ghost text-xl">Alive</a>
         </div>
         <div class="flex-none">
           <div class="dropdown dropdown-end">
-            <label tabindex="0" class="btn btn-ghost">
+            <div tabindex="0" role="button" class="btn btn-ghost">
               <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
               </svg>
               <span class="hidden sm:inline">Theme</span>
-            </label>
-            <ul tabindex="0" class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-52 z-50 max-h-96 overflow-y-auto">
+            </div>
+            <div tabindex="-1" class="dropdown-content bg-base-100 rounded-box w-52 z-1 shadow-sm" style="max-height: 70vh; overflow-y: auto;">
+              <ul class="menu p-2">
               <li class="menu-title"><span>Light</span></li>
               <li><a onclick="setTheme('light')">Light</a></li>
               <li><a onclick="setTheme('cupcake')">Cupcake</a></li>
@@ -73,6 +86,8 @@ def custom_root_template(context: RootTemplateContext) -> str:
               <li><a onclick="setTheme('lemonade')">Lemonade</a></li>
               <li><a onclick="setTheme('winter')">Winter</a></li>
               <li><a onclick="setTheme('nord')">Nord</a></li>
+              <li><a onclick="setTheme('caramellatte')">Caramellatte</a></li>
+              <li><a onclick="setTheme('silk')">Silk</a></li>
               <li class="menu-title"><span>Dark</span></li>
               <li><a onclick="setTheme('dark')">Dark</a></li>
               <li><a onclick="setTheme('synthwave')">Synthwave</a></li>
@@ -87,7 +102,9 @@ def custom_root_template(context: RootTemplateContext) -> str:
               <li><a onclick="setTheme('coffee')">Coffee</a></li>
               <li><a onclick="setTheme('dim')">Dim</a></li>
               <li><a onclick="setTheme('sunset')">Sunset</a></li>
-            </ul>
+              <li><a onclick="setTheme('abyss')">Abyss</a></li>
+              </ul>
+            </div>
           </div>
         </div>
       </div>
@@ -117,8 +134,9 @@ def custom_root_template(context: RootTemplateContext) -> str:
       <meta charset="utf-8">
       <meta http-equiv="X-UA-Compatible" content="IE=edge">
       <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-      <link href="https://cdn.jsdelivr.net/npm/daisyui@4/dist/full.min.css" rel="stylesheet" type="text/css" />
-      <script src="https://cdn.tailwindcss.com"></script>
+      <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+      <link href="https://cdn.jsdelivr.net/npm/daisyui@5/themes.css" rel="stylesheet" type="text/css" />
+      <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
       <link rel="stylesheet" href="/django-static/alive/css/alive.css">
       <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
       <script src="/django-static/alive/js/dragdrop.js"></script>
@@ -127,8 +145,20 @@ def custom_root_template(context: RootTemplateContext) -> str:
       {additional_head_elements}
     </head>
     <body class="bg-base-200 min-h-screen">
-      {header}
-      {main_content}
+      <div class="drawer lg:drawer-open">
+        <input id="alive-drawer" type="checkbox" class="drawer-toggle" />
+        <div class="drawer-content">
+          {navbar}
+          {main_content}
+        </div>
+        <div class="drawer-side">
+          <label for="alive-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
+          <ul class="menu bg-base-100 min-h-full w-64 p-4">
+            <li class="menu-title">Models</li>
+            {sidebar_items}
+          </ul>
+        </div>
+      </div>
       {theme_script}
     </body>
 </html>

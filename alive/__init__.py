@@ -40,6 +40,14 @@ from .components import (
     render_item_data,
 )
 
+# Global storage for registered models info (for drawer navigation)
+_registered_models: list[dict] = []
+
+
+def get_registered_models() -> list[dict]:
+    """Get list of registered models for navigation."""
+    return _registered_models
+
 
 def setup_alive(app, url_prefix: str = "/alive"):
     """
@@ -55,6 +63,7 @@ def setup_alive(app, url_prefix: str = "/alive"):
         app: The PyView application instance
         url_prefix: URL prefix for alive routes (default: "/alive")
     """
+    global _registered_models
     from django.apps import apps
 
     # Register signals
@@ -83,6 +92,9 @@ def setup_alive(app, url_prefix: str = "/alive"):
 
             print(f"[alive] Registered {model._meta.label} at {path}")
 
+    # Store globally for drawer navigation
+    _registered_models = models_info
+
     # Register index page
     index_path = f"{url_prefix}/"
     index_view = create_index_liveview(models_info)
@@ -104,4 +116,5 @@ __all__ = [
     "ItemMixin",
     "render_field_data",
     "render_item_data",
+    "get_registered_models",
 ]

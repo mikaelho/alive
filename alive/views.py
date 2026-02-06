@@ -48,6 +48,13 @@ class ModelContext:
     create_fields: list[dict] = field(default_factory=list)
     create_values: dict[str, str] = field(default_factory=dict)
     create_error: str = ""
+    # Picker state for adding existing items to relationships
+    picker_open: bool = False
+    picker_items: list[dict] = field(default_factory=list)
+    picker_selected: list[str] = field(default_factory=list)
+    picker_has_selection: bool = False  # Helper for template
+    picker_relation: str = ""  # The relation field name (e.g., "recipes")
+    picker_related_pk: str = ""  # The PK of the related object
 
 
 def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive") -> Type[LiveView]:
@@ -277,6 +284,76 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     if success:
                         await self._refresh_view_async(socket)
                         await socket.broadcast(store.channel, {"action": "item_deleted"})
+                return
+
+            if event == "unlink_item":
+                item_id = payload.get("item_id", "")
+                if item_id and socket.context.filters:
+                    # Get the relation info from filters
+                    for param, value in socket.context.filters.items():
+                        relation_field = param.replace("__pk", "")
+                        success = await store.remove_from_relation(item_id, relation_field, value)
+                        if success:
+                            await self._refresh_view_async(socket)
+                            await self._broadcast_change(socket)
+                        break
+                return
+
+            # Picker events for adding existing items to relationships
+            if event == "open_picker":
+                # Only works when we have a filter (viewing related items)
+                if socket.context.filters:
+                    for param, value in socket.context.filters.items():
+                        relation_field = param.replace("__pk", "")
+                        # Get items not already linked
+                        unlinked = await store.get_unlinked_items(relation_field, value)
+                        socket.context.picker_items = [
+                            {"id": str(item.pk), "title": str(item), "selected": False}
+                            for item in unlinked
+                        ]
+                        socket.context.picker_open = True
+                        socket.context.picker_selected = []
+                        socket.context.picker_relation = relation_field
+                        socket.context.picker_related_pk = value
+                        break
+                return
+
+            if event == "close_picker":
+                socket.context.picker_open = False
+                socket.context.picker_items = []
+                socket.context.picker_selected = []
+                socket.context.picker_has_selection = False
+                return
+
+            if event == "toggle_picker_item":
+                item_id = payload.get("item_id", "")
+                if item_id:
+                    if item_id in socket.context.picker_selected:
+                        socket.context.picker_selected.remove(item_id)
+                    else:
+                        socket.context.picker_selected.append(item_id)
+                    # Update the picker_items to reflect selection state
+                    for item in socket.context.picker_items:
+                        item["selected"] = item["id"] in socket.context.picker_selected
+                    # Update helper boolean
+                    socket.context.picker_has_selection = len(socket.context.picker_selected) > 0
+                return
+
+            if event == "confirm_picker":
+                if socket.context.picker_selected and socket.context.picker_relation:
+                    await store.add_items_to_relation(
+                        socket.context.picker_selected,
+                        socket.context.picker_relation,
+                        socket.context.picker_related_pk
+                    )
+                    # Reset picker state
+                    socket.context.picker_open = False
+                    socket.context.picker_items = []
+                    socket.context.picker_selected = []
+                    socket.context.picker_has_selection = False
+                    # Refresh the list
+                    await self._refresh_view_async(socket)
+                    await self._broadcast_change(socket)
                 return
 
             # Try field events first

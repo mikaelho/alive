@@ -11,7 +11,19 @@ function initKeyboardShortcuts() {
     document.addEventListener('keydown', function(e) {
         // Escape to cancel
         if (e.key === 'Escape') {
-            // Check for create form first (it's visible on the page)
+            // Check for picker modal first (highest priority)
+            const pickerModal = document.querySelector('.picker-modal');
+            if (pickerModal) {
+                e.preventDefault();
+                e.stopPropagation();
+                const cancelBtn = pickerModal.querySelector('button[phx-click="close_picker"]');
+                if (cancelBtn) {
+                    cancelBtn.click();
+                    return;
+                }
+            }
+
+            // Check for create form
             const createForm = document.querySelector('.create-form');
             if (createForm) {
                 e.preventDefault();
@@ -37,8 +49,19 @@ function initKeyboardShortcuts() {
             }
         }
 
-        // Cmd+Enter / Ctrl+Enter to save
+        // Cmd+Enter / Ctrl+Enter to save/confirm
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            // Check for picker modal first
+            const pickerModal = document.querySelector('.picker-modal');
+            if (pickerModal) {
+                e.preventDefault();
+                const confirmBtn = pickerModal.querySelector('button[phx-click="confirm_picker"]');
+                if (confirmBtn && !confirmBtn.disabled) {
+                    confirmBtn.click();
+                    return;
+                }
+            }
+
             const activeEl = document.activeElement;
             if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT')) {
                 e.preventDefault();

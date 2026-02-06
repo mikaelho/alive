@@ -162,6 +162,62 @@ class DjangoDataStore:
             print(f"[alive] Error deleting item: {e}")
             return False
 
+    @async_db
+    def get_unlinked_items(self, relation_field: str, related_pk: Any) -> list[models.Model]:
+        """Get items NOT linked to a specific related object via a M2M relation."""
+        try:
+            # Get all items
+            all_items = set(self.model.objects.all().values_list('pk', flat=True))
+
+            # Get items that ARE linked
+            linked_items = set(
+                self.model.objects.filter(**{f"{relation_field}__pk": related_pk})
+                .values_list('pk', flat=True)
+            )
+
+            # Return unlinked items
+            unlinked_pks = all_items - linked_items
+            return list(self.model.objects.filter(pk__in=unlinked_pks))
+        except Exception as e:
+            print(f"[alive] Error getting unlinked items: {e}")
+            return []
+
+    @async_db
+    def add_items_to_relation(self, item_pks: list[str], relation_field: str, related_pk: Any) -> bool:
+        """Add multiple items to a M2M relation."""
+        try:
+            for field in self.model._meta.get_fields():
+                if field.name == relation_field:
+                    if hasattr(field, 'related_model') and hasattr(field, 'field'):
+                        related_model = field.related_model
+                        related_obj = related_model.objects.get(pk=related_pk)
+                        m2m_field_name = field.field.name
+                        items = self.model.objects.filter(pk__in=[int(pk) for pk in item_pks])
+                        getattr(related_obj, m2m_field_name).add(*items)
+                        return True
+            return False
+        except Exception as e:
+            print(f"[alive] Error adding items to relation: {e}")
+            return False
+
+    @async_db
+    def remove_from_relation(self, item_pk: str, relation_field: str, related_pk: Any) -> bool:
+        """Remove an item from a M2M relation (unlink, not delete)."""
+        try:
+            for field in self.model._meta.get_fields():
+                if field.name == relation_field:
+                    if hasattr(field, 'related_model') and hasattr(field, 'field'):
+                        related_model = field.related_model
+                        related_obj = related_model.objects.get(pk=related_pk)
+                        m2m_field_name = field.field.name
+                        item = self.model.objects.get(pk=int(item_pk))
+                        getattr(related_obj, m2m_field_name).remove(item)
+                        return True
+            return False
+        except Exception as e:
+            print(f"[alive] Error removing from relation: {e}")
+            return False
+
 
 # Registry of stores by model
 _stores: dict[Type[models.Model], DjangoDataStore] = {}
