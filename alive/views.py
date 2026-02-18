@@ -98,6 +98,13 @@ class ModelContext:
     view_mode: str = "detail"
     detail_item_id: str = ""
     list_fields: list[str] = field(default_factory=list)
+    # Hand footer state (for player-role users)
+    hand_is_player: bool = False
+    hand_character_id: int | None = None
+    hand_card_count: int = 0
+    hand_drawn: bool = False
+    hand_cards: list[dict] = field(default_factory=list)
+    hand_draw_options: list[int] = field(default_factory=list)
 
 
 def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive") -> Type[LiveView]:
@@ -206,6 +213,11 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
             # Content fields are all fields except the title field
             content_field_list = [f for f in fields if f != title_field]
 
+            # Hand footer: detect player role
+            player_role = session.get("player_role")
+            character_id = session.get("character_id")
+            hand_is_player = player_role == "player" and character_id is not None
+
             # Initialize with empty filters - handle_params will set them
             socket.context = ModelContext(
                 items=[],
@@ -219,7 +231,12 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 filters={},
                 breadcrumbs=[],
                 player_id=player_id,
+                hand_is_player=hand_is_player,
+                hand_character_id=character_id if hand_is_player else None,
             )
+
+            if hand_is_player:
+                await self._load_hand_data(socket)
 
             if is_connected(socket):
                 await socket.subscribe(store.channel)
@@ -1130,6 +1147,33 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                             break
                 return
 
+            if event == "draw_hand":
+                count = int(payload.get("count", 1))
+                character_id = socket.context.hand_character_id
+                if character_id and count > 0:
+                    import random
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _draw(count=count):
+                        CharacterCard = apps.get_model('cards', 'CharacterCard')
+                        Hand = apps.get_model('cards', 'Hand')
+
+                        all_cards = list(CharacterCard.objects.filter(character_id=character_id))
+                        drawn = random.sample(all_cards, min(count, len(all_cards)))
+
+                        # Delete existing hands for this character
+                        Hand.objects.filter(character_id=character_id).delete()
+
+                        # Create new hand
+                        hand = Hand.objects.create(name="Hand", character_id=character_id)
+                        hand.cards.set(drawn)
+
+                    await _draw()
+                    await self._load_hand_data(socket)
+                return
+
             # Try field events first
             if await self.handle_field_event(event, payload, socket):
                 return
@@ -1186,6 +1230,47 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
         async def _broadcast_change(self, socket: LiveViewSocket[ModelContext]):
             """Broadcast state change to other clients."""
             await socket.broadcast(store.channel, {"action": "state_changed"})
+
+        async def _load_hand_data(self, socket: LiveViewSocket[ModelContext]):
+            """Load hand data for the player's character."""
+            character_id = socket.context.hand_character_id
+            if not character_id:
+                return
+
+            from asgiref.sync import sync_to_async as _sta
+            from django.apps import apps
+
+            @_sta(thread_sensitive=False)
+            def _fetch():
+                CharacterCard = apps.get_model('cards', 'CharacterCard')
+                Hand = apps.get_model('cards', 'Hand')
+                Card = apps.get_model('cards', 'Card')
+
+                card_count = CharacterCard.objects.filter(character_id=character_id).count()
+
+                hand = Hand.objects.filter(character_id=character_id).order_by('-id').first()
+                hand_cards = []
+                if hand:
+                    for cc in hand.cards.select_related('card', 'tag').all():
+                        card = cc.card
+                        # Build bands from level
+                        from cards.models.card import get_bands_for_level
+                        bands_data = get_bands_for_level(cc.level)
+
+                        hand_cards.append({
+                            "name": card.name,
+                            "notes_html": render_markdown_safe(card.notes) if card.notes else "",
+                            "bands": bands_data,
+                            "tag": str(cc.tag) if cc.tag else "",
+                        })
+
+                return card_count, hand_cards
+
+            card_count, hand_cards = await _fetch()
+            socket.context.hand_card_count = card_count
+            socket.context.hand_drawn = len(hand_cards) > 0
+            socket.context.hand_cards = hand_cards
+            socket.context.hand_draw_options = list(range(1, card_count + 1))
 
         async def _build_grid_data(self, player_id: int | None = None) -> list[dict]:
             """Build simplified item data for the grid view."""

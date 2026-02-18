@@ -27,6 +27,16 @@
             </div>
             <h1 id="detail-title-display-{{items.0.id}}" class="text-3xl font-bold {% if items.0.title_editing %}hidden{% endif %} {% if items.0.title_locked %}opacity-50 cursor-not-allowed{% else %}cursor-pointer hover:text-primary{% endif %}" {% if not items.0.title_locked %}phx-click="start_edit" phx-value-item_id="{{items.0.id}}" phx-value-field="{{items.0.title_field_name}}"{% endif %}>{{items.0.title_html}}</h1>
         </div>
+        <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                </svg>
+            </div>
+            <ul tabindex="-1" class="dropdown-content menu p-2 shadow-sm bg-base-100 rounded-box w-40 z-1">
+                <li><a id="delete-detail-{{items.0.id}}" class="text-error" phx-hook="ConfirmClick" data-confirm="Delete this item?" phx-click="delete_item" phx-value-item_id="{{items.0.id}}">Delete</a></li>
+            </ul>
+        </div>
         {% else %}
         <h1 class="text-3xl font-bold">{{model_name}}</h1>
         {% if not creating %}
@@ -500,4 +510,6 @@
         </div>
     </div>
     {% endif %}
+
+    {% include "hand_footer.html" %}
 </div>
