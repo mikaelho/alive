@@ -28,7 +28,9 @@ Usage:
         setup_alive(app)  # Auto-discovers models and registers routes
 """
 
-from .conf import AliveConf
+import time as _time
+
+from .conf import AliveConf, TagFieldConf
 from .mixin import AliveMixin
 from .store import DjangoDataStore, get_store
 from .signals import setup_signals, set_event_loop
@@ -39,14 +41,40 @@ from .components import (
     render_field_data,
     render_item_data,
 )
+from .ui import render_theme_picker, render_theme_script, render_rating
+
+# Cache-busting token, set at import time so it changes on every server restart
+CACHE_BUST = str(int(_time.time()))
 
 # Global storage for registered models info (for drawer navigation)
 _registered_models: list[dict] = []
 
 
-def get_registered_models() -> list[dict]:
-    """Get list of registered models for navigation."""
-    return _registered_models
+def get_registered_models(player_id=None) -> list[dict]:
+    """Get list of registered models for navigation, optionally filtered by player visibility."""
+    if player_id is None:
+        return _registered_models
+    result = []
+    for entry in _registered_models:
+        model_cls = entry.get("_model")
+        if model_cls:
+            model_conf = model_cls.get_alive_conf()
+            if model_conf.visible_to is not None and not model_conf.visible_to(player_id):
+                continue
+        result.append(entry)
+    return result
+
+
+def collect_static():
+    """Run Django's collectstatic command."""
+    from django.core.management import call_command
+    call_command("collectstatic", "--noinput", verbosity=0)
+    print("[alive] Static files collected")
+
+
+def static_url(path: str) -> str:
+    """Return a static URL with a cache-busting query parameter."""
+    return f"{path}?v={CACHE_BUST}"
 
 
 def setup_alive(app, url_prefix: str = "/alive"):
@@ -88,6 +116,7 @@ def setup_alive(app, url_prefix: str = "/alive"):
                 "title": model._meta.verbose_name_plural.title(),
                 "description": f"Manage {model._meta.verbose_name_plural}",
                 "url": path,
+                "_model": model,
             })
 
             print(f"[alive] Registered {model._meta.label} at {path}")
@@ -104,6 +133,7 @@ def setup_alive(app, url_prefix: str = "/alive"):
 
 __all__ = [
     "AliveConf",
+    "TagFieldConf",
     "AliveMixin",
     "DjangoDataStore",
     "get_store",
@@ -117,4 +147,10 @@ __all__ = [
     "render_field_data",
     "render_item_data",
     "get_registered_models",
+    "render_theme_picker",
+    "render_theme_script",
+    "render_rating",
+    "collect_static",
+    "static_url",
+    "CACHE_BUST",
 ]

@@ -2,6 +2,8 @@
 
 from typing import Any, Sequence
 
+from django.db import models as django_models
+
 from .editable_field import render_field_data, LockManager
 
 
@@ -13,6 +15,10 @@ def render_item_data(
     lock_manager: LockManager,
     title_field: str | None = None,
     content_fields: Sequence[str] | None = None,
+    fk_field_names: Sequence[str] | None = None,
+    tag_data: list[dict] | None = None,
+    inline_sections: list[dict] | None = None,
+    compact_fields: Sequence[str] = (),
 ) -> dict[str, Any]:
     """
     Build the template data for any model instance with editable fields.
@@ -25,10 +31,12 @@ def render_item_data(
         lock_manager: Lock manager for edit locking
         title_field: Which field to use as the title (optional)
         content_fields: Fields to show in the body (optional, defaults to non-title fields)
+        fk_field_names: List of FK field names (optional, for FK picker support)
 
     Returns:
         Dict with item data including field states for each field.
     """
+    fk_field_names = fk_field_names or []
     item_id = str(item.pk)
 
     data = {
@@ -36,10 +44,23 @@ def render_item_data(
         "fields": {},
     }
 
+    # Build a map of field names to verbose labels
+    field_labels = {}
+    for field in item._meta.get_fields():
+        if hasattr(field, 'name') and hasattr(field, 'verbose_name'):
+            field_labels[field.name] = field.verbose_name.title()
+
     for field_name in fields:
         raw_value = getattr(item, field_name, "")
+        is_fk = field_name in fk_field_names
+        fk_pk = None
+
         if raw_value is None:
             raw_value = ""
+        elif is_fk:
+            # For FK fields, store the pk before converting to string
+            fk_pk = str(raw_value.pk) if hasattr(raw_value, 'pk') else ""
+            raw_value = str(raw_value)
 
         # Convert non-string values to string for display
         if not isinstance(raw_value, str):
@@ -54,6 +75,11 @@ def render_item_data(
             lock_manager=lock_manager,
             render_html=True,
         )
+
+        # Add FK-specific data and label
+        field_data["is_fk"] = is_fk
+        field_data["fk_pk"] = fk_pk
+        field_data["label"] = field_labels.get(field_name, field_name.replace('_', ' ').title())
 
         data["fields"][field_name] = field_data
 
@@ -73,18 +99,44 @@ def render_item_data(
         data["title_editing_value"] = title_data["editing_value"]
         data["title_locked"] = title_data["is_locked"]
 
+    # Build compact fields data (displayed inline in the title row)
+    compact_set = set(compact_fields)
+    compact_fields_data = []
+    for field_name in compact_fields:
+        if field_name in data["fields"]:
+            field_info = data["fields"][field_name].copy()
+            field_info["name"] = field_name
+            compact_fields_data.append(field_info)
+    data["compact_fields_data"] = compact_fields_data
+    data["has_compact_fields"] = bool(compact_fields_data)
+
     # Build content fields list with data for template iteration
     if content_fields is None:
         content_fields = [f for f in fields if f != title_field]
 
     content_fields_data = []
     for field_name in content_fields:
+        if field_name in compact_set:
+            continue
         if field_name in data["fields"]:
             field_info = data["fields"][field_name].copy()
             field_info["name"] = field_name
+            try:
+                django_field = item._meta.get_field(field_name)
+                field_info["is_collapsible"] = isinstance(django_field, django_models.TextField)
+            except Exception:
+                field_info["is_collapsible"] = False
             content_fields_data.append(field_info)
 
     data["content_fields_data"] = content_fields_data
+
+    # Tag data
+    data["tags_data"] = tag_data or []
+    data["has_tags"] = bool(tag_data)
+
+    # Inline sections
+    data["inline_sections"] = inline_sections or []
+    data["has_inline"] = bool(inline_sections)
 
     return data
 

@@ -41,7 +41,7 @@ function initKeyboardShortcuts() {
             if (fieldEdit) {
                 e.preventDefault();
                 e.stopPropagation();
-                const cancelBtn = fieldEdit.querySelector('button[phx-click="cancel_edit"]');
+                const cancelBtn = fieldEdit.querySelector('button[phx-click="cancel_edit"], button[phx-click="cancel_inline_target_edit"]');
                 if (cancelBtn) {
                     cancelBtn.click();
                     return;
@@ -66,31 +66,18 @@ function initKeyboardShortcuts() {
             if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT')) {
                 e.preventDefault();
 
-                // Blur first to trigger phx-blur and send the current value
-                activeEl.blur();
+                // Find the save button BEFORE blurring, since blur may trigger re-render
+                const fieldEdit = activeEl.closest('.field-edit');
+                const createForm = activeEl.closest('.create-form');
+                const saveBtn = fieldEdit
+                    ? fieldEdit.querySelector('button[phx-click="save_edit"], button[phx-click="save_inline_target_edit"]')
+                    : createForm
+                    ? createForm.querySelector('button[phx-click="save_create"]')
+                    : null;
 
-                // Small delay to let the blur event be processed
-                setTimeout(function() {
-                    // Check for field edit mode
-                    const fieldEdit = activeEl.closest('.field-edit');
-                    if (fieldEdit) {
-                        const saveBtn = fieldEdit.querySelector('button[phx-click="save_edit"]');
-                        if (saveBtn) {
-                            saveBtn.click();
-                            return;
-                        }
-                    }
-
-                    // Check for create form
-                    const createForm = activeEl.closest('.create-form');
-                    if (createForm) {
-                        const createBtn = createForm.querySelector('button[phx-click="save_create"]');
-                        if (createBtn) {
-                            createBtn.click();
-                            return;
-                        }
-                    }
-                }, 50);
+                if (saveBtn) {
+                    saveBtn.click();
+                }
             }
         }
     }, true);  // Use capture phase
@@ -131,6 +118,45 @@ window.Hooks.ConfirmClick = {
                 e.stopPropagation();
             }
         }, true);  // Use capture to run before phx-click
+    }
+};
+
+window.Hooks.Collapsible = {
+    mounted() {
+        this.expanded = false;
+        this.setup();
+    },
+    updated() {
+        this.setup();
+    },
+    setup() {
+        const content = this.el.querySelector('.collapsible-content');
+        const toggle = this.el.querySelector('.collapsible-toggle');
+        if (!content || !toggle) return;
+
+        if (this.expanded) {
+            content.classList.remove('line-clamp-3');
+            toggle.textContent = 'Show less';
+            toggle.classList.remove('hidden');
+        } else {
+            content.classList.add('line-clamp-3');
+            if (content.scrollHeight > content.clientHeight + 1) {
+                toggle.textContent = 'Show more';
+                toggle.classList.remove('hidden');
+            } else {
+                toggle.classList.add('hidden');
+            }
+        }
+
+        if (!this._bound) {
+            this._bound = true;
+            toggle.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.expanded = !this.expanded;
+                this.setup();
+            });
+        }
     }
 };
 

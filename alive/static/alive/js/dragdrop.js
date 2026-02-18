@@ -44,3 +44,27 @@ window.Hooks.Sortable = {
         }
     }
 };
+
+window.Hooks.SortableTags = {
+    mounted() {
+        const hook = this;
+        this.sortable = new Sortable(this.el, {
+            animation: 150,
+            filter: '.no-drag',
+            preventOnFilter: false,
+            draggable: '.sortable-tag',
+            onEnd(evt) {
+                hook.pushEvent('reorder_tag', {
+                    item_id: hook.el.dataset.itemId,
+                    field: hook.el.dataset.field,
+                    tag_pk: evt.item.dataset.tagPk,
+                    position: evt.newIndex.toString()
+                });
+            }
+        });
+    },
+    updated() {},
+    destroyed() {
+        if (this.sortable) this.sortable.destroy();
+    }
+};

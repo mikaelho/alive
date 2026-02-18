@@ -65,12 +65,19 @@ def render_field_data(
     is_editing = key in editing
     is_locked = lock_holder is not None and lock_holder != session_id
 
+    editing_value = editing.get(key, "")
+    edit_rows = 3
+    if is_editing and editing_value:
+        line_count = editing_value.count('\n') + 1
+        edit_rows = max(3, min(20, line_count + 1))
+
     data = {
         "id": item_id,
         "field": field_name,
         "value": raw_value,
         "is_editing": is_editing,
-        "editing_value": editing.get(key, ""),
+        "editing_value": editing_value,
+        "edit_rows": edit_rows,
         "is_locked": is_locked,
     }
 

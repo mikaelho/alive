@@ -1,7 +1,16 @@
 """Configuration classes for Alive models."""
 
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Any, Callable, Sequence
+
+
+@dataclass
+class TagFieldConf:
+    """Configuration for a tag-like M2M field."""
+    field_name: str                    # M2M field on this model (e.g., "tags")
+    scope_path: str | None = None      # Path to scope object (e.g., "recipe" or "recipe__category")
+    scope_m2m_field: str | None = None # M2M field on scope pointing to tag model (auto-detected if None)
+    label: str | None = None           # Display label (defaults to field_name.title())
 
 
 @dataclass
@@ -19,9 +28,15 @@ class AliveConf:
 
     fields: Sequence[str] = ()
     editable_fields: Sequence[str] | None = None
+    create_fields: Sequence[str] | None = None
     title_field: str | None = None
     list_fields: Sequence[str] | None = None
     dive_to: Sequence[str] = ()
+    tag_fields: Sequence["TagFieldConf"] = ()
+    compact_fields: Sequence[str] = ()
+    inline: Sequence[str] = ()
+    visible_to: Callable[[Any], bool] | None = None
+    filter_queryset: Callable[[Any, Any], Any] | None = None
 
     def get_editable_fields(self) -> Sequence[str]:
         """Get editable fields, defaulting to fields minus common non-editable ones."""

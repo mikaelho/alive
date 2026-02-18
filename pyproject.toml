@@ -1,14 +1,41 @@
 [project]
-name = "pyview-cards"
-version = "0.1.0"
-requires-python = ">=3.14"
+name = "alive"
+version = "2025.2.4"
+description = "Real-time Django model views with PyView"
+readme = "alive/README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Django",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
+    "django>=4.2",
     "pyview-web",
-    "uvicorn",
-    "markdown",
-    "django>=5.0",
     "asgiref",
+    "markdown",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["."]
+[project.urls]
+Homepage = "https://github.com/mikaelhonkala/alive"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["alive", "alive.*"]
+
+[tool.setuptools.package-data]
+alive = ["templates/*", "static/**/*"]
+
+[tool.uv]
+dev-dependencies = [
+    "uvicorn",
+]

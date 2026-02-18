@@ -2,7 +2,7 @@
 
 from django.db import models
 
-from alive import AliveMixin, AliveConf
+from alive import AliveMixin, AliveConf, TagFieldConf
 
 
 class FamilyMember(models.Model, AliveMixin):
@@ -42,6 +42,23 @@ class Ingredient(models.Model, AliveMixin):
         return self.name
 
 
+class Tag(models.Model, AliveMixin):
+    """A tag for categorizing recipes and meals (e.g., 'quick', 'vegetarian')."""
+
+    alive = AliveConf(
+        fields=("name",),
+        title_field="name",
+    )
+
+    name = models.CharField(max_length=100)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class Recipe(models.Model, AliveMixin):
     """A recipe with ingredients and instructions."""
 
@@ -50,11 +67,19 @@ class Recipe(models.Model, AliveMixin):
         editable_fields=("title", "description"),
         title_field="title",
         dive_to=("ingredients",),
+        tag_fields=(
+            TagFieldConf(field_name="tags"),
+        ),
     )
 
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     instructions = models.TextField(blank=True)
+    tags = models.ManyToManyField(
+        Tag,
+        blank=True,
+        related_name='recipes',
+    )
     ingredients = models.ManyToManyField(
         Ingredient,
         through='RecipeIngredient',
@@ -104,12 +129,20 @@ class Meal(models.Model, AliveMixin):
     ]
 
     alive = AliveConf(
-        fields=("date", "meal_type"),
+        fields=("date", "meal_type", "recipe"),
         title_field="meal_type",
+        tag_fields=(
+            TagFieldConf(field_name="tags", scope_path="recipe"),
+        ),
     )
 
     date = models.DateField()
     meal_type = models.CharField(max_length=20, choices=MEAL_TYPES)
+    tags = models.ManyToManyField(
+        Tag,
+        blank=True,
+        related_name='meals',
+    )
     recipe = models.ForeignKey(
         Recipe,
         on_delete=models.CASCADE,

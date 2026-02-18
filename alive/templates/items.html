@@ -16,6 +16,18 @@
     {% endif %}
 
     <div class="flex justify-between items-center mb-6">
+        {% if detail_item_id and items %}
+        <div id="detail-title-{{items.0.id}}">
+            <div class="field-edit {% if not items.0.title_editing %}hidden{% endif %}" id="edit-{{items.0.id}}-{{items.0.title_field_name}}" phx-hook="AutoFocus">
+                <input type="text" class="input input-primary text-3xl font-bold w-full" name="value" value="{{items.0.title_editing_value}}" phx-keyup="update_draft" phx-value-item_id="{{items.0.id}}" phx-value-field="{{items.0.title_field_name}}" autocomplete="off" />
+                <div class="flex gap-2 mt-2">
+                    <button class="btn btn-primary btn-sm" phx-click="save_edit" phx-value-item_id="{{items.0.id}}" phx-value-field="{{items.0.title_field_name}}">Save</button>
+                    <button class="btn btn-ghost btn-sm" phx-click="cancel_edit" phx-value-item_id="{{items.0.id}}" phx-value-field="{{items.0.title_field_name}}">Cancel</button>
+                </div>
+            </div>
+            <h1 id="detail-title-display-{{items.0.id}}" class="text-3xl font-bold {% if items.0.title_editing %}hidden{% endif %} {% if items.0.title_locked %}opacity-50 cursor-not-allowed{% else %}cursor-pointer hover:text-primary{% endif %}" {% if not items.0.title_locked %}phx-click="start_edit" phx-value-item_id="{{items.0.id}}" phx-value-field="{{items.0.title_field_name}}"{% endif %}>{{items.0.title_html}}</h1>
+        </div>
+        {% else %}
         <h1 class="text-3xl font-bold">{{model_name}}</h1>
         {% if not creating %}
         <div class="flex gap-2">
@@ -24,6 +36,7 @@
             {% endif %}
             <button class="btn btn-primary" phx-click="start_create">+ Create New</button>
         </div>
+        {% endif %}
         {% endif %}
     </div>
 
@@ -34,33 +47,35 @@
             {% if create_error %}
             <div class="alert alert-error">{{create_error}}</div>
             {% endif %}
+            <form phx-change="update_create_field" phx-submit="save_create">
             {% for field in create_fields %}
             <fieldset class="fieldset w-full">
                 <legend class="fieldset-legend">{{field.label}}{% if field.required %} *{% endif %}</legend>
                 {% if field.field_type == 'textarea' %}
-                <textarea class="textarea w-full" name="{{field.name}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" rows="3" autocomplete="off">{{field.value}}</textarea>
+                <textarea class="textarea w-full" name="{{field.name}}" phx-value-field="{{field.name}}" rows="3" autocomplete="off">{{field.value}}</textarea>
                 {% elif field.field_type == 'select' %}
-                <select class="select w-full" name="{{field.name}}" phx-change="update_create_field" phx-value-field="{{field.name}}">
+                <select class="select w-full" name="{{field.name}}" phx-value-field="{{field.name}}">
                     <option value="">-- Select --</option>
                     {% for choice in field.choices %}
                     <option value="{{choice.0}}">{{choice.1}}</option>
                     {% endfor %}
                 </select>
                 {% elif field.field_type == 'checkbox' %}
-                <input type="checkbox" class="checkbox" name="{{field.name}}" phx-change="update_create_field" phx-value-field="{{field.name}}" {% if field.value %}checked{% endif %} />
+                <input type="checkbox" class="checkbox" name="{{field.name}}" phx-value-field="{{field.name}}" {% if field.value %}checked{% endif %} />
                 {% elif field.field_type == 'date' %}
-                <input type="date" class="input w-full" name="{{field.name}}" value="{{field.value}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" />
+                <input type="date" class="input w-full" name="{{field.name}}" value="{{field.value}}" phx-value-field="{{field.name}}" />
                 {% elif field.field_type == 'number' %}
-                <input type="number" class="input w-full" name="{{field.name}}" value="{{field.value}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" autocomplete="off" />
+                <input type="number" class="input w-full" name="{{field.name}}" value="{{field.value}}" phx-value-field="{{field.name}}" autocomplete="off" />
                 {% else %}
-                <input type="text" class="input w-full" name="{{field.name}}" value="{{field.value}}" phx-blur="update_create_field" phx-value-field="{{field.name}}" autocomplete="off" />
+                <input type="text" class="input w-full" name="{{field.name}}" value="{{field.value}}" phx-value-field="{{field.name}}" autocomplete="off" />
                 {% endif %}
             </fieldset>
             {% endfor %}
             <div class="card-actions justify-end mt-4">
-                <button class="btn btn-ghost" phx-click="cancel_create">Cancel</button>
-                <button class="btn btn-primary" phx-click="save_create">Create</button>
+                <button type="button" class="btn btn-ghost" phx-click="cancel_create">Cancel</button>
+                <button type="submit" class="btn btn-primary">Create</button>
             </div>
+            </form>
         </div>
     </div>
     {% endif %}
@@ -69,6 +84,7 @@
         {% for item in items %}
         <div class="card bg-base-100 shadow-sm" id="card-{{item.id}}" data-card-id="{{item.id}}">
             <div class="card-body">
+                {% if not detail_item_id %}
                 <div class="flex items-center gap-2">
                     <div class="cursor-grab text-base-content/40 hover:text-base-content drag-handle">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -106,16 +122,59 @@
                     </div>
                     {% endif %}
                 </div>
+                {% endif %}
+
+                {% if item.has_compact_fields %}
+                <div class="flex flex-wrap gap-x-6 gap-y-2">
+                    {% for field in item.compact_fields_data %}
+                    <div>
+                        <span class="text-xs text-base-content/50 uppercase font-semibold">{{field.label}}</span>
+                        {% if field.is_locked %}
+                        <div class="prose opacity-50 cursor-not-allowed">{{field.value_html}}</div>
+                        {% elif field.is_fk %}
+                        <div class="prose cursor-pointer hover:text-primary" phx-click="open_fk_picker" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">{{field.value_html}}</div>
+                        {% elif field.is_editing %}
+                        <div class="field-edit" id="edit-{{item.id}}-{{field.name}}" phx-hook="AutoFocus">
+                            <input type="text" class="input input-primary input-sm" name="value" value="{{field.editing_value}}" phx-keyup="update_draft" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}" autocomplete="off" />
+                            <div class="flex gap-2 mt-1">
+                                <button class="btn btn-primary btn-xs" phx-click="save_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">Save</button>
+                                <button class="btn btn-ghost btn-xs" phx-click="cancel_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">Cancel</button>
+                            </div>
+                        </div>
+                        {% else %}
+                        <div class="prose cursor-pointer hover:bg-base-200 p-1 -m-1 rounded" phx-click="start_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">{{field.value_html}}</div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
 
                 {% for field in item.content_fields_data %}
                 <div class="mt-4">
-                    {% if field.is_editing %}
+                    {% if field.is_fk %}
+                    <div>
+                        <span class="text-xs text-base-content/50 uppercase font-semibold">{{field.label}}</span>
+                        <span class="prose cursor-pointer hover:text-primary" phx-click="open_fk_picker" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">{{field.value_html}}</span>
+                    </div>
+                    {% elif field.is_editing %}
+                    <span class="text-xs text-base-content/50 uppercase font-semibold">{{field.label}}</span>
                     <div class="field-edit" id="edit-{{item.id}}-{{field.name}}" phx-hook="AutoFocus">
-                        <textarea class="textarea textarea-primary w-full" name="value" phx-keyup="update_draft" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}" rows="3">{{field.editing_value}}</textarea>
+                        <textarea class="textarea textarea-primary w-full" name="value" phx-keyup="update_draft" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}" rows="{{field.edit_rows}}">{{field.editing_value}}</textarea>
                         <div class="flex gap-2 mt-2">
                             <button class="btn btn-primary btn-sm" phx-click="save_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">Save</button>
                             <button class="btn btn-ghost btn-sm" phx-click="cancel_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">Cancel</button>
                         </div>
+                    </div>
+                    {% else %}
+                    <span class="text-xs text-base-content/50 uppercase font-semibold">{{field.label}}</span>
+                    {% if field.is_collapsible %}
+                    <div id="collapsible-{{item.id}}-{{field.name}}" phx-hook="Collapsible">
+                        {% if field.is_locked %}
+                        <div class="prose collapsible-content line-clamp-3 opacity-50 cursor-not-allowed">{{field.value_html}}</div>
+                        {% else %}
+                        <div class="prose collapsible-content line-clamp-3 cursor-pointer hover:bg-base-200 p-2 -m-2 rounded" phx-click="start_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">{{field.value_html}}</div>
+                        {% endif %}
+                        <button class="collapsible-toggle btn btn-ghost btn-xs text-base-content/50 mt-1 hidden">Show more</button>
                     </div>
                     {% else %}
                     {% if field.is_locked %}
@@ -124,8 +183,122 @@
                     <div class="prose cursor-pointer hover:bg-base-200 p-2 -m-2 rounded" phx-click="start_edit" phx-value-item_id="{{item.id}}" phx-value-field="{{field.name}}">{{field.value_html}}</div>
                     {% endif %}
                     {% endif %}
+                    {% endif %}
                 </div>
                 {% endfor %}
+
+                {% if item.has_tags %}
+                {% for tag_group in item.tags_data %}
+                <div class="mt-3">
+                    <span class="text-xs text-base-content/50 uppercase font-semibold">{{tag_group.label}}</span>
+                    {% if tag_group.sortable %}
+                    <div class="flex items-center gap-2 flex-wrap mt-1"
+                         id="tags-{{item.id}}-{{tag_group.field_name}}"
+                         phx-hook="SortableTags"
+                         data-item-id="{{item.id}}"
+                         data-field="{{tag_group.field_name}}">
+                        {% for tag in tag_group.tags %}
+                        <span class="badge badge-sm gap-1 cursor-grab sortable-tag" data-tag-pk="{{tag.id}}">
+                            {{tag.title}}
+                            <button class="btn btn-ghost btn-xs p-0 min-h-0 h-auto no-drag" phx-click="remove_tag" phx-value-item_id="{{item.id}}" phx-value-tag_pk="{{tag.id}}" phx-value-field="{{tag_group.field_name}}">&times;</button>
+                        </span>
+                        {% endfor %}
+                        <button class="btn btn-ghost btn-xs btn-circle no-drag" phx-click="open_tag_picker" phx-value-item_id="{{item.id}}" phx-value-field="{{tag_group.field_name}}">+</button>
+                    </div>
+                    {% else %}
+                    <div class="flex items-center gap-2 flex-wrap mt-1">
+                        {% for tag in tag_group.tags %}
+                        <span class="badge badge-sm gap-1">
+                            {{tag.title}}
+                            <button class="btn btn-ghost btn-xs p-0 min-h-0 h-auto" phx-click="remove_tag" phx-value-item_id="{{item.id}}" phx-value-tag_pk="{{tag.id}}" phx-value-field="{{tag_group.field_name}}">&times;</button>
+                        </span>
+                        {% endfor %}
+                        <button class="btn btn-ghost btn-xs btn-circle" phx-click="open_tag_picker" phx-value-item_id="{{item.id}}" phx-value-field="{{tag_group.field_name}}">+</button>
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+                {% endif %}
+
+                {% if item.has_inline %}
+                {% for section in item.inline_sections %}
+                <div class="mt-3">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-xs text-base-content/50 uppercase font-semibold">{{section.label}}</span>
+                        <button class="btn btn-ghost btn-xs btn-circle" phx-click="open_inline_create" phx-value-item_id="{{item.id}}" phx-value-relation="{{section.relation_name}}">+</button>
+                    </div>
+                    {% for group in section.groups %}
+                    {% if group.label %}
+                    <div class="text-xs text-base-content/50 font-semibold mt-2 mb-1">{{group.label}}</div>
+                    {% endif %}
+                    {% if group.related_items %}
+                    <div class="flex flex-wrap gap-2">
+                        {% for related in group.related_items %}
+                        <div class="card card-compact bg-base-200 shadow-sm w-full sm:w-64">
+                            <div class="card-body p-3">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div class="flex-1">
+                                        {% if related.target_name_editing %}
+                                        <div class="field-edit" phx-hook="AutoFocus" id="inline-edit-{{related.target_pk}}-name">
+                                            <input type="text" class="input input-primary input-sm w-full font-semibold" name="value" value="{{related.target_name_editing_value}}" phx-keyup="update_inline_target_draft" phx-value-target_pk="{{related.target_pk}}" phx-value-field="name" autocomplete="off" />
+                                            <div class="flex gap-2 mt-1">
+                                                <button class="btn btn-primary btn-xs" phx-click="save_inline_target_edit" phx-value-target_pk="{{related.target_pk}}" phx-value-field="name">Save</button>
+                                                <button class="btn btn-ghost btn-xs" phx-click="cancel_inline_target_edit" phx-value-target_pk="{{related.target_pk}}" phx-value-field="name">Cancel</button>
+                                            </div>
+                                        </div>
+                                        {% elif related.target_name_locked %}
+                                        <h3 class="font-semibold text-sm opacity-50 cursor-not-allowed">{{related.title}}</h3>
+                                        {% elif related.target_name_editable %}
+                                        <h3 class="font-semibold text-sm cursor-pointer hover:text-primary" phx-click="start_inline_target_edit" phx-value-target_pk="{{related.target_pk}}" phx-value-field="name">{{related.title}}</h3>
+                                        {% else %}
+                                        <h3 class="font-semibold text-sm">{{related.title}}</h3>
+                                        {% endif %}
+                                        {% if related.target_notes_editing %}
+                                        <div class="field-edit mt-1" phx-hook="AutoFocus" id="inline-edit-{{related.target_pk}}-notes">
+                                            <textarea class="textarea textarea-primary textarea-sm w-full" name="value" phx-keyup="update_inline_target_draft" phx-value-target_pk="{{related.target_pk}}" phx-value-field="notes" rows="3">{{related.target_notes_editing_value}}</textarea>
+                                            <div class="flex gap-2 mt-1">
+                                                <button class="btn btn-primary btn-xs" phx-click="save_inline_target_edit" phx-value-target_pk="{{related.target_pk}}" phx-value-field="notes">Save</button>
+                                                <button class="btn btn-ghost btn-xs" phx-click="cancel_inline_target_edit" phx-value-target_pk="{{related.target_pk}}" phx-value-field="notes">Cancel</button>
+                                            </div>
+                                        </div>
+                                        {% elif related.target_notes_locked %}
+                                        <div class="prose prose-sm text-xs mt-1 opacity-50 cursor-not-allowed">{{related.target_notes_html}}</div>
+                                        {% elif related.target_notes_editable and related.target_fields.notes %}
+                                        <div class="prose prose-sm text-xs mt-1 cursor-pointer hover:bg-base-300 p-1 -m-1 rounded" phx-click="start_inline_target_edit" phx-value-target_pk="{{related.target_pk}}" phx-value-field="notes">{{related.target_notes_html}}</div>
+                                        {% elif related.target_notes_editable %}
+                                        <div class="text-xs text-base-content/40 mt-1 cursor-pointer hover:text-base-content/60" phx-click="start_inline_target_edit" phx-value-target_pk="{{related.target_pk}}" phx-value-field="notes"><em>Add notes...</em></div>
+                                        {% elif related.target_fields.notes %}
+                                        <div class="prose prose-sm text-xs mt-1">{{related.target_notes_html}}</div>
+                                        {% endif %}
+                                    </div>
+                                    <button class="btn btn-ghost btn-xs p-0 min-h-0 h-auto" phx-click="remove_inline_item" phx-value-through_pk="{{related.id}}">&times;</button>
+                                </div>
+                                {% if related.level %}
+                                <div class="flex items-center gap-1 mt-2">
+                                    <button class="btn btn-ghost btn-xs btn-circle" phx-click="adjust_inline_field" phx-value-through_pk="{{related.id}}" phx-value-field="level" phx-value-delta="-1">&minus;</button>
+                                    {{related.rating_html}}
+                                    <button class="btn btn-ghost btn-xs btn-circle" phx-click="adjust_inline_field" phx-value-through_pk="{{related.id}}" phx-value-field="level" phx-value-delta="1">+</button>
+                                </div>
+                                {% endif %}
+                                {% if related.bands %}
+                                <div class="flex flex-col mt-1">
+                                    {% for band in related.bands %}
+                                    <div class="flex gap-1 text-xs text-base-content/70 leading-snug">
+                                        <span class="font-mono shrink-0 text-center" style="width: 3ch">{{band.dice_range}}</span>
+                                        <span>{{band.label}}</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% endfor %}
+                {% endif %}
 
                 {% if item.dive_buttons %}
                 <div class="card-actions justify-end mt-4">
@@ -163,6 +336,167 @@
                 <button class="btn btn-ghost" phx-click="close_picker">Cancel</button>
                 <button class="btn btn-primary" phx-click="confirm_picker" {% if not picker_has_selection %}disabled{% endif %}>Add Selected</button>
             </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if fk_picker_open %}
+    <div class="fk-picker-modal fixed inset-0 z-50" phx-window-keydown="close_fk_picker" phx-key="Escape">
+        <div class="fixed inset-0 bg-black/50" phx-click="close_fk_picker"></div>
+        <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+        <div class="bg-base-100 rounded-lg shadow-lg w-full max-w-md max-h-[80vh] flex flex-col pointer-events-auto">
+            <div class="p-4 border-b border-base-300">
+                <h3 class="text-lg font-bold">Select {{fk_picker_field}}</h3>
+                <input type="text" class="input input-bordered w-full mt-2" placeholder="Search..." value="{{fk_picker_filter}}" phx-keyup="filter_fk_picker" phx-debounce="200" />
+            </div>
+            <div class="p-2 overflow-y-auto flex-1">
+                {% if fk_picker_nullable %}
+                <button class="w-full text-left p-2 rounded hover:bg-base-200" phx-click="select_fk_item" phx-value-pk="">
+                    <em class="text-base-content/50">None</em>
+                </button>
+                {% endif %}
+                {% for choice in fk_picker_items %}
+                <button class="w-full text-left p-2 rounded hover:bg-base-200 {% if choice.id == fk_picker_current %}bg-primary/10{% endif %}" phx-click="select_fk_item" phx-value-pk="{{choice.id}}">
+                    {{choice.title}}
+                </button>
+                {% endfor %}
+            </div>
+            <div class="p-4 border-t border-base-300">
+                <button class="btn btn-ghost w-full" phx-click="close_fk_picker">Cancel</button>
+            </div>
+        </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if tag_picker_open %}
+    <div class="tag-picker-modal fixed inset-0 z-50" phx-window-keydown="close_tag_picker" phx-key="Escape">
+        <div class="fixed inset-0 bg-black/50" phx-click="close_tag_picker"></div>
+        <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+        <div class="bg-base-100 rounded-lg shadow-lg w-full max-w-md max-h-[80vh] flex flex-col pointer-events-auto">
+            <div class="p-4 border-b border-base-300">
+                <h3 class="text-lg font-bold">{{tag_picker_label}}</h3>
+                <input type="text" class="input input-bordered w-full mt-2" placeholder="Search or add new..." value="{{tag_picker_filter}}" phx-keyup="filter_tag_picker" phx-debounce="200" />
+            </div>
+            <div class="p-2 overflow-y-auto flex-1">
+                {% for tag in tag_picker_items %}
+                <button class="w-full text-left p-2 rounded hover:bg-base-200 flex items-center gap-2" phx-click="toggle_tag" phx-value-tag_pk="{{tag.id}}">
+                    {% if tag_picker_multiple %}
+                    <input type="checkbox" class="checkbox checkbox-sm pointer-events-none" {% if tag.attached %}checked{% endif %} />
+                    {% else %}
+                    <input type="radio" class="radio radio-sm pointer-events-none" {% if tag.attached %}checked{% endif %} />
+                    {% endif %}
+                    <span>{{tag.title}}</span>
+                </button>
+                {% endfor %}
+                {% if not tag_picker_items and tag_picker_filter %}
+                <p class="text-base-content/50 p-2">No matching tags.</p>
+                {% endif %}
+            </div>
+            <div class="p-4 border-t border-base-300">
+                {% if tag_picker_can_create and not tag_create_open %}
+                <button class="btn btn-outline btn-sm w-full mb-2" phx-click="start_tag_create">Add "{{tag_picker_filter}}" as new</button>
+                {% endif %}
+                {% if tag_create_open %}
+                <div class="mb-2 p-3 bg-base-200 rounded-lg">
+                    <h4 class="font-semibold text-sm mb-2">New Tag</h4>
+                    {% if tag_create_error %}
+                    <div class="alert alert-error text-sm mb-2">{{tag_create_error}}</div>
+                    {% endif %}
+                    {% for field in tag_create_fields %}
+                    <fieldset class="fieldset w-full mb-1">
+                        <legend class="fieldset-legend text-xs">{{field.label}}{% if field.required %} *{% endif %}</legend>
+                        {% if field.field_type == 'textarea' %}
+                        <textarea class="textarea textarea-sm w-full" phx-blur="update_tag_create_field" phx-value-field="{{field.name}}" rows="2">{{field.value}}</textarea>
+                        {% elif field.field_type == 'number' %}
+                        <input type="number" class="input input-sm w-full" value="{{field.value}}" phx-blur="update_tag_create_field" phx-value-field="{{field.name}}" />
+                        {% elif field.field_type == 'checkbox' %}
+                        <input type="checkbox" class="checkbox checkbox-sm" phx-change="update_tag_create_field" phx-value-field="{{field.name}}" {% if field.value %}checked{% endif %} />
+                        {% else %}
+                        <input type="text" class="input input-sm w-full" value="{{field.value}}" phx-blur="update_tag_create_field" phx-value-field="{{field.name}}" />
+                        {% endif %}
+                    </fieldset>
+                    {% endfor %}
+                    <div class="flex gap-2 justify-end mt-2">
+                        <button class="btn btn-ghost btn-sm" phx-click="cancel_tag_create">Cancel</button>
+                        <button class="btn btn-primary btn-sm" phx-click="save_tag_create">Create</button>
+                    </div>
+                </div>
+                {% endif %}
+                <button class="btn btn-ghost w-full" phx-click="close_tag_picker">Done</button>
+            </div>
+        </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if inline_create_open %}
+    <div class="fixed inset-0 z-50" phx-window-keydown="close_inline_create" phx-key="Escape">
+        <div class="fixed inset-0 bg-black/50" phx-click="close_inline_create"></div>
+        <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+        <div class="bg-base-100 rounded-lg shadow-lg w-full max-w-md max-h-[80vh] flex flex-col pointer-events-auto">
+            <form phx-change="update_inline_create_field" phx-submit="save_inline_create">
+                <div class="p-4 overflow-y-auto">
+                    <h3 class="text-lg font-bold mb-4">Create New</h3>
+                    {% if inline_create_error %}
+                    <div class="alert alert-error mb-4">{{inline_create_error}}</div>
+                    {% endif %}
+                    {% for field in inline_create_target_fields %}
+                    <fieldset class="fieldset w-full">
+                        <legend class="fieldset-legend">{{field.label}}{% if field.required %} *{% endif %}</legend>
+                        {% if field.field_type == 'textarea' %}
+                        <textarea class="textarea w-full" name="{{field.name}}" rows="3" autocomplete="off">{{field.value}}</textarea>
+                        {% elif field.field_type == 'select' %}
+                        <select class="select w-full" name="{{field.name}}">
+                            <option value="">-- Select --</option>
+                            {% for choice in field.choices %}
+                            <option value="{{choice.0}}" {% if field.value == choice.0 %}selected{% endif %}>{{choice.1}}</option>
+                            {% endfor %}
+                        </select>
+                        {% elif field.field_type == 'checkbox' %}
+                        <input type="checkbox" class="checkbox" name="{{field.name}}" {% if field.value %}checked{% endif %} />
+                        {% elif field.field_type == 'number' %}
+                        <input type="number" class="input w-full" name="{{field.name}}" value="{{field.value}}" autocomplete="off" />
+                        {% elif field.field_type == 'date' %}
+                        <input type="date" class="input w-full" name="{{field.name}}" value="{{field.value}}" />
+                        {% else %}
+                        <input type="text" class="input w-full" name="{{field.name}}" value="{{field.value}}" autocomplete="off" {% if field.autofocus %}autofocus{% endif %} />
+                        {% endif %}
+                    </fieldset>
+                    {% endfor %}
+                    {% if inline_create_through_fields %}
+                    <div class="divider text-xs text-base-content/50 uppercase">Details</div>
+                    {% for field in inline_create_through_fields %}
+                    <fieldset class="fieldset w-full">
+                        <legend class="fieldset-legend">{{field.label}}{% if field.required %} *{% endif %}</legend>
+                        {% if field.field_type == 'textarea' %}
+                        <textarea class="textarea w-full" name="{{field.name}}" rows="3" autocomplete="off">{{field.value}}</textarea>
+                        {% elif field.field_type == 'select' %}
+                        <select class="select w-full" name="{{field.name}}">
+                            <option value="">-- Select --</option>
+                            {% for choice in field.choices %}
+                            <option value="{{choice.0}}" {% if field.value == choice.0 %}selected{% endif %}>{{choice.1}}</option>
+                            {% endfor %}
+                        </select>
+                        {% elif field.field_type == 'checkbox' %}
+                        <input type="checkbox" class="checkbox" name="{{field.name}}" {% if field.value %}checked{% endif %} />
+                        {% elif field.field_type == 'number' %}
+                        <input type="number" class="input w-full" name="{{field.name}}" value="{{field.value}}" autocomplete="off" />
+                        {% elif field.field_type == 'date' %}
+                        <input type="date" class="input w-full" name="{{field.name}}" value="{{field.value}}" />
+                        {% else %}
+                        <input type="text" class="input w-full" name="{{field.name}}" value="{{field.value}}" autocomplete="off" />
+                        {% endif %}
+                    </fieldset>
+                    {% endfor %}
+                    {% endif %}
+                </div>
+                <div class="p-4 border-t border-base-300 flex justify-end gap-2">
+                    <button type="button" class="btn btn-ghost" phx-click="close_inline_create">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create</button>
+                </div>
+            </form>
+        </div>
         </div>
     </div>
     {% endif %}

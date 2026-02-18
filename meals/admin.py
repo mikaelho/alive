@@ -2,7 +2,7 @@
 
 from django.contrib import admin
 
-from .models import FamilyMember, Ingredient, Recipe, RecipeIngredient, Meal, MealRating
+from .models import FamilyMember, Ingredient, Tag, Recipe, RecipeIngredient, Meal, MealRating
 
 
 class RecipeIngredientInline(admin.TabularInline):
@@ -18,6 +18,12 @@ class FamilyMemberAdmin(admin.ModelAdmin):
 
 @admin.register(Ingredient)
 class IngredientAdmin(admin.ModelAdmin):
+    list_display = ['name']
+    search_fields = ['name']
+
+
+@admin.register(Tag)
+class TagAdmin(admin.ModelAdmin):
     list_display = ['name']
     search_fields = ['name']
 
