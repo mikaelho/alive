@@ -1,0 +1,31 @@
+<div class="drawer lg:drawer-open">
+    <input id="app-drawer" type="checkbox" class="drawer-toggle" />
+    <div class="drawer-content {% if hand_is_player and hand_character_id %}pb-28{% endif %}">
+        <div class="navbar bg-base-100 shadow mb-4">
+            <div class="flex-1">
+                <label for="app-drawer" class="btn btn-ghost lg:hidden">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                </label>
+                <a href="{{frame.app_url}}" class="btn btn-ghost text-xl">{{frame.app_title}}</a>
+            </div>
+            <div class="flex-none flex items-center gap-2">
+                <select class="select select-sm select-bordered"
+                    onchange="window.location.href='{{frame.set_player_url}}' + this.value">
+                    <option value="">-- Select Player --</option>
+                    {% for p in frame.player_options %}
+                    <option value="{{p.pk}}" {% if p.pk == frame.player_id %}selected{% endif %}>{{p.name}}</option>
+                    {% endfor %}
+                </select>
+                {% if frame.show_game_selector %}
+                <select class="select select-sm select-bordered"
+                    onchange="window.location.href='{{frame.set_game_url}}' + this.value">
+                    {% for g in frame.game_options %}
+                    <option value="{{g.pk}}" {% if g.pk == frame.game_id %}selected{% endif %}>{{g.name}}</option>
+                    {% endfor %}
+                </select>
+                {% endif %}
+                {{frame.theme_picker_html}}
+            </div>
+        </div>

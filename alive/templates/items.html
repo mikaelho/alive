@@ -1,3 +1,4 @@
+{% include "frame_top.html" %}
 <div class="container mx-auto p-4 max-w-4xl">
     {% if breadcrumbs %}
     <div class="text-sm breadcrumbs mb-4">
@@ -284,20 +285,22 @@
                                     <button class="btn btn-ghost btn-xs p-0 min-h-0 h-auto" phx-click="remove_inline_item" phx-value-through_pk="{{related.id}}">&times;</button>
                                 </div>
                                 {% if related.level %}
-                                <div class="flex items-center gap-1 mt-2">
-                                    <button class="btn btn-ghost btn-xs btn-circle" phx-click="adjust_inline_field" phx-value-through_pk="{{related.id}}" phx-value-field="level" phx-value-delta="-1">&minus;</button>
-                                    {{related.rating_html}}
-                                    <button class="btn btn-ghost btn-xs btn-circle" phx-click="adjust_inline_field" phx-value-through_pk="{{related.id}}" phx-value-field="level" phx-value-delta="1">+</button>
-                                </div>
-                                {% endif %}
-                                {% if related.bands %}
-                                <div class="flex flex-col mt-1">
-                                    {% for band in related.bands %}
-                                    <div class="flex gap-1 text-xs text-base-content/70 leading-snug">
-                                        <span class="font-mono shrink-0 text-center" style="width: 3ch">{{band.dice_range}}</span>
-                                        <span>{{band.label}}</span>
+                                <div class="flex gap-2 items-center mt-2">
+                                    <div class="flex flex-col items-center">
+                                        <button class="btn btn-ghost btn-xs p-0 min-h-0 h-auto leading-none text-base-content/40 hover:text-base-content/70" phx-click="adjust_inline_field" phx-value-through_pk="{{related.id}}" phx-value-field="level" phx-value-delta="1">&#9650;</button>
+                                        <span class="text-2xl font-bold leading-none my-0.5">{{related.level}}</span>
+                                        <button class="btn btn-ghost btn-xs p-0 min-h-0 h-auto leading-none text-base-content/40 hover:text-base-content/70" phx-click="adjust_inline_field" phx-value-through_pk="{{related.id}}" phx-value-field="level" phx-value-delta="-1">&#9660;</button>
                                     </div>
-                                    {% endfor %}
+                                    {% if related.bands %}
+                                    <div class="flex flex-col">
+                                        {% for band in related.bands %}
+                                        <div class="flex gap-1 text-xs text-base-content/70 leading-snug">
+                                            <span class="font-mono shrink-0 text-center" style="width: 3ch">{{band.dice_range}}</span>
+                                            <span>{{band.label}}</span>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                    {% endif %}
                                 </div>
                                 {% endif %}
                             </div>
@@ -511,5 +514,5 @@
     </div>
     {% endif %}
 
-    {% include "hand_footer.html" %}
 </div>
+{% include "frame_bottom.html" %}

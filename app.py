@@ -89,6 +89,7 @@ def custom_root_template(context: RootTemplateContext) -> str:
       <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
       <script src="{static_url('/django-static/alive/js/dragdrop.js')}"></script>
       <script src="{static_url('/django-static/alive/js/keyboard.js')}"></script>
+      <script src="{static_url('/django-static/alive/js/hexmap.js')}"></script>
       <script defer type="text/javascript" src="/static/assets/app.js"></script>
       {additional_head_elements}
     </head>

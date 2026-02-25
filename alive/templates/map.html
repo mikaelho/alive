@@ -1,0 +1,244 @@
+{% include "frame_top.html" %}
+<div class="container mx-auto p-4">
+    {% if is_keeper %}
+    <div class="flex justify-end gap-2 mb-2">
+        <button class="btn btn-sm {% if hex_show_overlays %}btn-secondary{% else %}btn-ghost{% endif %}"
+                phx-click="toggle_overlays">
+            {% if hex_show_overlays %}Hide Overlays{% else %}Show Overlays{% endif %}
+        </button>
+        <button class="btn btn-sm {% if hex_map_edit %}btn-primary{% else %}btn-ghost{% endif %}"
+                phx-click="toggle_map_edit">
+            {% if hex_map_edit %}Done Editing{% else %}Edit Map{% endif %}
+        </button>
+    </div>
+    {% endif %}
+
+    {% if hex_map_edit %}
+    <div class="flex gap-4">
+        <div class="w-48 shrink-0">
+            <div class="flex flex-col gap-1 sticky top-4">
+                <h3 class="font-bold text-sm mb-1">Terrain</h3>
+                {{hex_map_palette}}
+
+                <div class="divider my-1"></div>
+                <h3 class="font-bold text-sm mb-1">Rivers</h3>
+                {% if hex_river_drawing %}
+                <button class="btn btn-sm btn-primary w-full justify-start gap-2"
+                        phx-click="finish_river">
+                    <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 13l4 4L19 7"/>
+                    </svg>
+                    Finish River</button>
+                <button class="btn btn-sm btn-ghost w-full justify-start gap-2"
+                        phx-click="undo_river_point">
+                    <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 14L4 9l5-5M4 9h11a4 4 0 010 8h-1"/>
+                    </svg>
+                    Undo Point</button>
+                {% else %}
+                <button class="btn btn-sm btn-ghost w-full justify-start gap-2"
+                        phx-click="start_river">
+                    <svg viewBox="-12 -12 24 24" class="h-5 w-5">
+                        <path d="M0,-9 C-5,-3 5,3 0,9" stroke-width="2.5" fill="none" stroke="currentColor" opacity="0.5"/>
+                    </svg>
+                    Draw River</button>
+                {% endif %}
+                <button class="btn btn-sm btn-ghost w-full justify-start gap-2"
+                        phx-click="delete_last_river">
+                    <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                    Delete Last River</button>
+            </div>
+        </div>
+        <div class="flex-1 min-w-0 relative" id="hex-map-container" phx-hook="HexMap">
+            {{hex_map_svg}}
+            {% if hex_notes_mode and hex_selected_hex %}
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none" style="z-index: 10;">
+                <div class="card bg-base-100 shadow-xl border border-base-300 w-80 max-h-96 overflow-auto pointer-events-auto">
+                    <div class="card-body p-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-xs opacity-60">Hex {{hex_selected_hex}}</span>
+                            <button class="btn btn-ghost btn-xs" phx-click="close_hex_note">
+                                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M18 6L6 18M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        {% if hex_note_editing %}
+                        <form phx-submit="save_hex_note">
+                            <textarea class="textarea textarea-bordered w-full" name="note" rows="8" placeholder="Notes for this hex...">{{hex_selected_note}}</textarea>
+                            <div class="flex gap-2 mt-2">
+                                <button type="submit" class="btn btn-sm btn-primary flex-1">Save</button>
+                            </div>
+                        </form>
+                        {% else %}
+                            {% if hex_note_html %}
+                            <div class="prose prose-sm max-w-none cursor-pointer" phx-click="edit_hex_note">
+                                {{hex_note_html}}
+                            </div>
+                            {% else %}
+                            <div class="text-sm opacity-40 italic cursor-pointer" phx-click="edit_hex_note">Click to add a note...</div>
+                            {% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        <div class="w-48 shrink-0">
+            <div class="flex flex-col gap-1 sticky top-4">
+                <h3 class="font-bold text-sm mb-1">Keeper Overlays</h3>
+                {{hex_overlay_palette}}
+
+                <div class="divider my-1"></div>
+                <h3 class="font-bold text-sm mb-1">Notes</h3>
+                <button class="btn btn-sm {% if hex_notes_mode %}btn-primary{% else %}btn-ghost{% endif %} w-full justify-start gap-2"
+                        phx-click="toggle_notes_mode">
+                    <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                    {% if hex_notes_mode %}Done{% else %}Edit Notes{% endif %}
+                </button>
+                {% if hex_notes_mode %}
+                <div class="text-xs opacity-60 mt-1">Click a hex to view/edit its note</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="flex flex-col md:flex-row gap-4">
+        <div class="flex-1 min-w-0" id="hex-map-container" phx-hook="HexMap">
+            {{hex_map_svg}}
+            {% if is_keeper and not party_location %}
+            <div class="text-center text-sm text-base-content/40 mt-2">Click a hex to place the party</div>
+            {% endif %}
+        </div>
+        <div class="md:w-56 md:shrink-0">
+            <div class="flex gap-1 mb-4">
+                <button class="btn btn-sm btn-ghost flex-1 gap-1" phx-click="open_map_create" phx-value-type="note">
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                    Note
+                </button>
+                <button class="btn btn-sm btn-ghost flex-1 gap-1" phx-click="open_map_create" phx-value-type="situation">
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                    Situation
+                </button>
+            </div>
+            {% if timeline_entries %}
+            <h3 class="text-sm text-base-content/50 uppercase font-semibold mb-2">Mission Log</h3>
+            <ul class="timeline timeline-vertical timeline-compact" style="--timeline-color: color-mix(in oklch, var(--color-base-content) 30%, transparent);">
+                {% for entry in timeline_entries %}
+                <li data-highlight-entry="{{entry.id}}">
+                    {% if not entry.is_first %}<hr style="background: var(--timeline-color);"/>{% endif %}
+                    <div class="timeline-middle">
+                        <svg class="h-3.5 w-3.5" viewBox="0 0 14 14">
+                            <circle cx="7" cy="7" r="5" fill="var(--color-base-content)" opacity="0.3"/>
+                        </svg>
+                    </div>
+                    {% if entry.name %}
+                    <div class="timeline-end py-1 px-2">
+                        <span class="cursor-pointer text-sm" phx-click="open_map_detail" phx-value-id="{{entry.id}}">{{entry.name}}</span>
+                    </div>
+                    {% endif %}
+                    {% if not entry.is_last %}<hr style="background: var(--timeline-color);"/>{% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if map_create_open %}
+    <div class="fixed inset-0 z-50">
+        <div class="fixed inset-0 bg-black/30" phx-click="map_cancel_create"></div>
+        <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+            <div class="bg-base-100 rounded-lg shadow-lg w-full max-w-sm pointer-events-auto">
+                <div class="p-4 create-form" phx-hook="AutoFocus">
+                    <h2 class="text-lg font-bold mb-3">New {% if map_create_type == "note" %}Note{% else %}Situation{% endif %}</h2>
+                    {% if map_create_error %}
+                    <div class="alert alert-error mb-3">{{map_create_error}}</div>
+                    {% endif %}
+                    <form phx-change="map_update_create" phx-submit="map_save_create">
+                        <fieldset class="fieldset w-full">
+                            <legend class="fieldset-legend">Name *</legend>
+                            <input type="text" class="input w-full" name="name" value="{{map_create_name}}" autocomplete="off"/>
+                        </fieldset>
+                        <fieldset class="fieldset w-full mt-2">
+                            <legend class="fieldset-legend">Notes</legend>
+                            <textarea class="textarea w-full" name="notes" rows="4" placeholder="Optional notes...">{{map_create_notes}}</textarea>
+                        </fieldset>
+                        <div class="flex justify-end gap-2 mt-4">
+                            <button type="button" class="btn btn-ghost" phx-click="map_cancel_create">Cancel</button>
+                            <button type="submit" class="btn btn-primary" phx-click="map_save_create">Create</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if map_detail %}
+    <div class="fixed inset-0 z-50">
+        <div class="fixed inset-0 bg-black/30" phx-click="close_map_detail"></div>
+        <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+            <div class="bg-base-100 rounded-lg shadow-lg w-full max-w-md pointer-events-auto map-detail-popup">
+                <div class="p-4">
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="text-xs uppercase opacity-50">{{map_detail.type_label}}</span>
+                        <button class="btn btn-ghost btn-xs" phx-click="close_map_detail">
+                            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+
+                    {% if map_detail_editing == "name" %}
+                    <div class="field-edit mb-3" id="map-edit-name" phx-hook="AutoFocus">
+                        <input type="text" class="input input-primary text-lg font-bold w-full" name="value" value="{{map_detail_draft}}" phx-keyup="map_update_draft" phx-value-field="name" autocomplete="off"/>
+                        <div class="flex gap-2 mt-1">
+                            <button class="btn btn-primary btn-xs" phx-click="map_save_edit" phx-value-field="name">Save</button>
+                            <button class="btn btn-ghost btn-xs" phx-click="map_cancel_edit" phx-value-field="name">Cancel</button>
+                        </div>
+                    </div>
+                    {% elif map_detail.name_locked %}
+                    <h3 class="text-lg font-bold mb-3 opacity-50 cursor-not-allowed">{{map_detail.name}}</h3>
+                    {% else %}
+                    <h3 class="text-lg font-bold mb-3 cursor-pointer hover:bg-base-200 rounded px-1 -mx-1" phx-click="map_start_edit" phx-value-field="name">{{map_detail.name}}</h3>
+                    {% endif %}
+
+                    <span class="text-xs text-base-content/50 uppercase font-semibold">Notes</span>
+                    {% if map_detail_editing == "notes" %}
+                    <div class="field-edit" id="map-edit-notes" phx-hook="AutoFocus">
+                        <textarea class="textarea textarea-primary w-full" name="value" phx-keyup="map_update_draft" phx-value-field="notes" rows="6">{{map_detail_draft}}</textarea>
+                        <div class="flex gap-2 mt-2">
+                            <button class="btn btn-primary btn-sm" phx-click="map_save_edit" phx-value-field="notes">Save</button>
+                            <button class="btn btn-ghost btn-sm" phx-click="map_cancel_edit" phx-value-field="notes">Cancel</button>
+                        </div>
+                    </div>
+                    {% elif map_detail.notes_locked %}
+                    <div class="opacity-50 cursor-not-allowed mt-1">
+                        {% if map_detail.notes_html %}
+                        <div class="prose prose-sm max-w-none">{{map_detail.notes_html}}</div>
+                        {% else %}
+                        <span class="text-sm opacity-40 italic">No notes</span>
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <div class="cursor-pointer hover:bg-base-200 rounded px-1 -mx-1 mt-1 min-h-8" phx-click="map_start_edit" phx-value-field="notes">
+                        {% if map_detail.notes_html %}
+                        <div class="prose prose-sm max-w-none">{{map_detail.notes_html}}</div>
+                        {% else %}
+                        <span class="text-sm opacity-40 italic">Click to add notes...</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% endif %}
+</div>
+{% include "frame_bottom.html" %}

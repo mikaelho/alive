@@ -35,6 +35,7 @@ class AliveConf:
     tag_fields: Sequence["TagFieldConf"] = ()
     compact_fields: Sequence[str] = ()
     inline: Sequence[str] = ()
+    template: str | None = None
     visible_to: Callable[[Any], bool] | None = None
     filter_queryset: Callable[[Any, Any], Any] | None = None
 

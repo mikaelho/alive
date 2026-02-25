@@ -12,7 +12,7 @@ from pyview.template import template_file, LiveRender
 from pyview.meta import PyViewMeta
 
 from .mixin import AliveMixin
-from .store import get_store, DjangoDataStore, acquire_lock, release_lock, get_lock_holder
+from .store import get_store, DjangoDataStore, acquire_lock, release_lock, release_all_locks, get_lock_holder
 from .components import EditableFieldMixin, ItemMixin, render_item_data
 from .components.editable_field import render_markdown_safe
 
@@ -28,6 +28,11 @@ class IndexContext:
     """Context for the index page."""
 
     items: list[dict] = field(default_factory=list)
+    frame: dict = field(default_factory=dict)
+    # Quick dice rolls (sidebar)
+    quick_d6: int = 6
+    quick_d6_svg: str = ""
+    quick_d12: int = 12
 
 
 @dataclass
@@ -98,6 +103,8 @@ class ModelContext:
     view_mode: str = "detail"
     detail_item_id: str = ""
     list_fields: list[str] = field(default_factory=list)
+    # Frame data (populated by app's frame_context_provider)
+    frame: dict = field(default_factory=dict)
     # Hand footer state (for player-role users)
     hand_is_player: bool = False
     hand_character_id: int | None = None
@@ -105,6 +112,57 @@ class ModelContext:
     hand_drawn: bool = False
     hand_cards: list[dict] = field(default_factory=list)
     hand_draw_options: list[int] = field(default_factory=list)
+    hand_active_situation_id: int | None = None
+    # Situation page state
+    situation_cards: list[dict] = field(default_factory=list)
+    past_situations: list[dict] = field(default_factory=list)
+    active_situation_name: str = ""
+    active_situation_notes: str = ""
+    situation_dice: list[int] = field(default_factory=list)
+    situation_assignments: dict = field(default_factory=dict)
+    situation_dice_assigned: bool = False
+    situation_resolved: bool = False
+    situation_all_assigned: bool = False
+    # Keeper state
+    is_keeper: bool = False
+    keeper_character_id: int | None = None
+    keeper_available_cards: list[dict] = field(default_factory=list)
+    keeper_adding: bool = False
+    keeper_creating: bool = False
+    # Map state
+    hex_map_svg: str = ""
+    hex_map_edit: bool = False
+    hex_map_palette: str = ""
+    hex_overlay_palette: str = ""
+    hex_active_symbol: str = ""
+    hex_active_overlay: str = ""
+    hex_overlay_mode: bool = False
+    hex_show_overlays: bool = False
+    hex_map_id: int | None = None
+    hex_river_drawing: bool = False
+    hex_current_river: list[str] = field(default_factory=list)
+    hex_notes_mode: bool = False
+    hex_selected_hex: str = ""
+    hex_selected_note: str = ""
+    hex_note_html: str = ""
+    hex_note_editing: bool = False
+    # Timeline / party location state (map page)
+    timeline_entries: list[dict] = field(default_factory=list)
+    party_location: str = ""
+    # Map page create dialog
+    map_create_open: bool = False
+    map_create_type: str = ""
+    map_create_name: str = ""
+    map_create_notes: str = ""
+    map_create_error: str = ""
+    # Quick dice rolls (sidebar)
+    quick_d6: int = 6
+    quick_d6_svg: str = ""
+    quick_d12: int = 12
+    # Map page detail popup
+    map_detail: dict = field(default_factory=dict)
+    map_detail_editing: str = ""
+    map_detail_draft: str = ""
 
 
 def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive") -> Type[LiveView]:
@@ -199,6 +257,9 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
 
         async def render(self, context: ModelContext, meta: PyViewMeta):
             """Render using the appropriate template based on view mode."""
+            if conf.template:
+                custom_path = str(TEMPLATE_DIR / conf.template)
+                return LiveRender(template_file(custom_path), context, meta)
             if context.view_mode == "grid":
                 return LiveRender(template_file(GRID_TEMPLATE_PATH), context, meta)
             return LiveRender(template_file(DEFAULT_TEMPLATE_PATH), context, meta)
@@ -218,6 +279,12 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
             character_id = session.get("character_id")
             hand_is_player = player_role == "player" and character_id is not None
 
+            # Frame context from app
+            from alive import _frame_context_provider
+            frame_data = {}
+            if _frame_context_provider:
+                frame_data = await _frame_context_provider(session)
+
             # Initialize with empty filters - handle_params will set them
             socket.context = ModelContext(
                 items=[],
@@ -231,9 +298,16 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 filters={},
                 breadcrumbs=[],
                 player_id=player_id,
+                frame=frame_data,
                 hand_is_player=hand_is_player,
                 hand_character_id=character_id if hand_is_player else None,
+                is_keeper=player_role == "keeper",
+                keeper_character_id=character_id if player_role == "keeper" else None,
             )
+
+            # Set initial d6 SVG with pips
+            from alive.ui import render_die_svg
+            socket.context.quick_d6_svg = render_die_svg(socket.context.quick_d6, css_class="h-8 w-8")
 
             if hand_is_player:
                 await self._load_hand_data(socket)
@@ -245,6 +319,13 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     target_store = get_store(info["target_model"])
                     if target_store.channel != store.channel:
                         await socket.subscribe(target_store.channel)
+                # Subscribe to Card channel for hand footer lock updates
+                if hand_is_player:
+                    from django.apps import apps as _apps
+                    _Card = _apps.get_model('cards', 'Card')
+                    _card_store = get_store(_Card)
+                    if _card_store.channel not in {store.channel} | {get_store(i["target_model"]).channel for i in inline_infos}:
+                        await socket.subscribe(_card_store.channel)
 
         async def handle_params(self, url, params: dict, socket: LiveViewSocket[ModelContext]):
             """Handle URL parameters for filtering."""
@@ -314,6 +395,10 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     socket.context.session_id, socket.context.editing, filters,
                     player_id=socket.context.player_id,
                 )
+
+            # Load custom template data if applicable
+            await self._load_situation_data(socket)
+            await self._load_map_data(socket)
 
         async def _get_related_object_name(self, relation_field: str, pk: str) -> str | None:
             """Get the string representation of a related object."""
@@ -447,6 +532,23 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                         # param is like "recipes__pk", we need "recipes"
                         relation_field = param.replace("__pk", "")
                         await store.add_to_relation(item, relation_field, value)
+
+                # Auto-set location for new situations from HexMap party_location
+                if conf.template == "situation.html" and item:
+                    from asgiref.sync import sync_to_async as _sta_loc
+                    from django.apps import apps as _apps_loc
+
+                    _game_id = socket.context.frame.get("game_id")
+                    if _game_id:
+                        @_sta_loc(thread_sensitive=False)
+                        def _set_location():
+                            HexMap = _apps_loc.get_model('cards', 'HexMap')
+                            hm = HexMap.objects.filter(game_id=_game_id).first()
+                            if hm and hm.party_location:
+                                item.location = hm.party_location
+                                item.save(update_fields=["location"])
+
+                        await _set_location()
 
                 # Reset creation state
                 socket.context.creating = False
@@ -1174,6 +1276,777 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     await self._load_hand_data(socket)
                 return
 
+            if event == "toggle_hand_situation":
+                card_id = payload.get("card_id", "")
+                situation_id = socket.context.hand_active_situation_id
+                if card_id and situation_id and socket.context.hand_is_player and not socket.context.situation_dice:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _toggle():
+                        Situation = apps.get_model('cards', 'Situation')
+                        sit = Situation.objects.get(pk=situation_id)
+                        if sit.dice:
+                            return  # Frozen after roll
+                        cc_pk = int(card_id)
+                        if sit.cards.filter(pk=cc_pk).exists():
+                            sit.cards.remove(cc_pk)
+                        else:
+                            sit.cards.add(cc_pk)
+
+                    await _toggle()
+                    await self._load_hand_data(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "remove_situation_card":
+                card_id = payload.get("card_id", "")
+                situation_id = payload.get("situation_id", "")
+                if card_id and situation_id and not socket.context.situation_dice:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _remove():
+                        Situation = apps.get_model('cards', 'Situation')
+                        sit = Situation.objects.get(pk=int(situation_id))
+                        if sit.dice:
+                            return  # Frozen after roll
+                        sit.cards.remove(int(card_id))
+
+                    await _remove()
+                    await self._refresh_view_async(socket)
+                    if socket.context.hand_is_player:
+                        await self._load_hand_data(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "rename_situation":
+                new_name = payload.get("value", "").strip()
+                situation_id = socket.context.hand_active_situation_id
+                if new_name and situation_id:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _rename():
+                        Situation = apps.get_model('cards', 'Situation')
+                        Situation.objects.filter(pk=situation_id).update(name=new_name)
+
+                    await _rename()
+                    await self._refresh_view_async(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "keeper_start_add":
+                socket.context.keeper_adding = True
+                socket.context.keeper_creating = False
+                return
+
+            if event == "keeper_cancel_add":
+                socket.context.keeper_adding = False
+                socket.context.keeper_creating = False
+                return
+
+            if event == "keeper_start_create":
+                socket.context.keeper_creating = True
+                return
+
+            if event == "keeper_add_card":
+                card_id = payload.get("card_id", "")
+                situation_id = socket.context.hand_active_situation_id
+                if card_id and situation_id and socket.context.is_keeper:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _add():
+                        Situation = apps.get_model('cards', 'Situation')
+                        sit = Situation.objects.get(pk=situation_id)
+                        if sit.dice:
+                            return
+                        sit.cards.add(int(card_id))
+
+                    await _add()
+                    socket.context.keeper_adding = False
+                    await self._refresh_view_async(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "keeper_create_card":
+                card_name = payload.get("name", "").strip()
+                card_level = payload.get("level", "4")
+                situation_id = socket.context.hand_active_situation_id
+                keeper_char_id = socket.context.keeper_character_id
+                if card_name and situation_id and keeper_char_id and socket.context.is_keeper:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _create():
+                        Card = apps.get_model('cards', 'Card')
+                        CharacterCard = apps.get_model('cards', 'CharacterCard')
+                        Situation = apps.get_model('cards', 'Situation')
+                        sit = Situation.objects.get(pk=situation_id)
+                        if sit.dice:
+                            return
+                        card = Card.objects.create(name=card_name)
+                        cc = CharacterCard.objects.create(
+                            character_id=keeper_char_id,
+                            card=card,
+                            level=int(card_level) if card_level else 4,
+                        )
+                        sit.cards.add(cc)
+
+                    await _create()
+                    socket.context.keeper_adding = False
+                    socket.context.keeper_creating = False
+                    await self._refresh_view_async(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            # --- Map editing events ---
+
+            if event == "toggle_map_edit":
+                if socket.context.is_keeper:
+                    # Commit any in-progress river before leaving edit mode
+                    if socket.context.hex_map_edit and socket.context.hex_current_river:
+                        await self._commit_river(socket)
+                    socket.context.hex_map_edit = not socket.context.hex_map_edit
+                    socket.context.hex_active_symbol = ""
+                    socket.context.hex_active_overlay = ""
+                    socket.context.hex_overlay_mode = False
+                    socket.context.hex_river_drawing = False
+                    socket.context.hex_current_river = []
+                    await self._load_map_data(socket)
+                return
+
+            if event == "select_map_symbol":
+                # Commit any in-progress river when switching tools
+                if socket.context.hex_current_river:
+                    await self._commit_river(socket)
+                symbol = payload.get("symbol", "")
+                socket.context.hex_active_symbol = symbol
+                socket.context.hex_active_overlay = ""
+                socket.context.hex_overlay_mode = False
+                socket.context.hex_river_drawing = False
+                socket.context.hex_notes_mode = False
+                socket.context.hex_selected_hex = ""
+                socket.context.hex_selected_note = ""
+                socket.context.hex_note_html = ""
+                socket.context.hex_note_editing = False
+                await self._load_map_data(socket)
+                return
+
+            if event == "toggle_overlays":
+                if socket.context.is_keeper:
+                    socket.context.hex_show_overlays = not socket.context.hex_show_overlays
+                    await self._load_map_data(socket)
+                return
+
+            if event == "select_overlay_symbol":
+                if socket.context.hex_current_river:
+                    await self._commit_river(socket)
+                symbol = payload.get("symbol", "")
+                socket.context.hex_active_overlay = symbol
+                socket.context.hex_active_symbol = ""
+                socket.context.hex_overlay_mode = True
+                socket.context.hex_show_overlays = True
+                socket.context.hex_river_drawing = False
+                socket.context.hex_notes_mode = False
+                socket.context.hex_selected_hex = ""
+                socket.context.hex_selected_note = ""
+                socket.context.hex_note_html = ""
+                socket.context.hex_note_editing = False
+                await self._load_map_data(socket)
+                return
+
+            if event == "toggle_notes_mode":
+                if socket.context.hex_current_river:
+                    await self._commit_river(socket)
+                socket.context.hex_notes_mode = not socket.context.hex_notes_mode
+                if socket.context.hex_notes_mode:
+                    socket.context.hex_active_symbol = ""
+                    socket.context.hex_active_overlay = ""
+                    socket.context.hex_overlay_mode = False
+                    socket.context.hex_river_drawing = False
+                else:
+                    socket.context.hex_selected_hex = ""
+                    socket.context.hex_selected_note = ""
+                    socket.context.hex_note_html = ""
+                    socket.context.hex_note_editing = False
+                await self._load_map_data(socket)
+                return
+
+            if event == "save_hex_note":
+                map_id = socket.context.hex_map_id
+                hex_key = socket.context.hex_selected_hex
+                if not map_id or not hex_key or not socket.context.is_keeper:
+                    return
+                note_text = payload.get("note", "")
+                if isinstance(note_text, list):
+                    note_text = note_text[0] if note_text else ""
+
+                from asgiref.sync import sync_to_async as _sta
+
+                @_sta(thread_sensitive=False)
+                def _save_note():
+                    hex_map = model.objects.get(pk=map_id)
+                    notes = hex_map.notes or {}
+                    if note_text.strip():
+                        notes[hex_key] = note_text
+                    else:
+                        notes.pop(hex_key, None)
+                    hex_map.notes = notes
+                    hex_map.save(update_fields=["notes"])
+
+                await _save_note()
+                socket.context.hex_selected_note = note_text
+                socket.context.hex_note_html = render_markdown_safe(note_text) if note_text.strip() else ""
+                socket.context.hex_note_editing = False
+                await self._load_map_data(socket)
+                return
+
+            if event == "edit_hex_note":
+                socket.context.hex_note_editing = True
+                await self._load_map_data(socket)
+                return
+
+            if event == "close_hex_note":
+                if socket.context.hex_selected_hex:
+                    socket.context.hex_selected_hex = ""
+                    socket.context.hex_selected_note = ""
+                    socket.context.hex_note_html = ""
+                    socket.context.hex_note_editing = False
+                    await self._load_map_data(socket)
+                return
+
+            if event == "move_party":
+                if not socket.context.is_keeper or socket.context.hex_map_edit:
+                    return
+                col = payload.get("col", "")
+                row = payload.get("row", "")
+                if col == "" or row == "":
+                    return
+                target_key = f"{col},{row}"
+                current = socket.context.party_location
+
+                if current:
+                    from alive.ui import get_adjacent_hexes
+                    cc, cr = map(int, current.split(","))
+                    adjacent = get_adjacent_hexes(cc, cr)
+                    if target_key not in adjacent:
+                        return
+
+                map_id = socket.context.hex_map_id
+                if not map_id:
+                    return
+
+                from asgiref.sync import sync_to_async as _sta
+
+                @_sta(thread_sensitive=False)
+                def _move():
+                    hex_map = model.objects.get(pk=map_id)
+                    if hex_map.party_location:
+                        trail = hex_map.party_trail or []
+                        trail.append(hex_map.party_location)
+                        hex_map.party_trail = trail
+                    hex_map.party_location = target_key
+                    hex_map.save(update_fields=["party_location", "party_trail"])
+
+                await _move()
+                await self._load_map_data(socket)
+                await self._broadcast_change(socket)
+                return
+
+            # --- Map create dialog ---
+
+            if event == "open_map_create":
+                sit_type = payload.get("type", "note")
+                socket.context.map_create_open = True
+                socket.context.map_create_type = sit_type
+                socket.context.map_create_name = ""
+                socket.context.map_create_notes = ""
+                socket.context.map_create_error = ""
+                return
+
+            if event == "map_cancel_create":
+                socket.context.map_create_open = False
+                socket.context.map_create_type = ""
+                socket.context.map_create_name = ""
+                socket.context.map_create_notes = ""
+                socket.context.map_create_error = ""
+                return
+
+            if event == "map_update_create":
+                name = payload.get("name", "")
+                if isinstance(name, list):
+                    name = name[0] if name else ""
+                socket.context.map_create_name = name
+                notes = payload.get("notes", "")
+                if isinstance(notes, list):
+                    notes = notes[0] if notes else ""
+                socket.context.map_create_notes = notes
+                return
+
+            if event == "map_save_create":
+                name = socket.context.map_create_name.strip()
+                notes = socket.context.map_create_notes.strip()
+                sit_type = socket.context.map_create_type or "note"
+                if not name:
+                    socket.context.map_create_error = "Name is required"
+                    return
+                game_id = socket.context.frame.get("game_id")
+                if not game_id:
+                    return
+
+                from asgiref.sync import sync_to_async as _sta
+                from django.apps import apps as _apps_mc
+
+                @_sta(thread_sensitive=False)
+                def _create_entry():
+                    Situation = _apps_mc.get_model('cards', 'Situation')
+                    HexMap = _apps_mc.get_model('cards', 'HexMap')
+                    loc = ""
+                    hm = HexMap.objects.filter(game_id=game_id).first()
+                    if hm and hm.party_location:
+                        loc = hm.party_location
+                    return Situation.objects.create(
+                        name=name, notes=notes, game_id=game_id,
+                        situation_type=sit_type, location=loc,
+                    )
+
+                new_sit = await _create_entry()
+                socket.context.map_create_open = False
+                socket.context.map_create_type = ""
+                socket.context.map_create_name = ""
+                socket.context.map_create_notes = ""
+                socket.context.map_create_error = ""
+                await self._load_map_data(socket)
+                await self._broadcast_change(socket)
+                return
+
+            # --- Map detail popup ---
+
+            if event == "open_map_detail":
+                entry_id = payload.get("id", "")
+                if not entry_id:
+                    return
+                # Close previous detail (release locks)
+                await self._close_map_detail(socket)
+                socket.context.map_detail = {"id": entry_id}
+                await self._refresh_map_detail(socket)
+                return
+
+            if event == "close_map_detail":
+                had_editing = bool(socket.context.map_detail_editing)
+                await self._close_map_detail(socket)
+                if had_editing:
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "map_start_edit":
+                field_name = payload.get("field", "")
+                detail_id = (socket.context.map_detail or {}).get("id", "")
+                if not field_name or not detail_id:
+                    return
+                from .store import acquire_lock as _acq
+
+                sid = socket.context.session_id
+                if _acq("cards.situation", detail_id, field_name, sid):
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps as _apps_se
+
+                    @_sta(thread_sensitive=False)
+                    def _get_value():
+                        Situation = _apps_se.get_model('cards', 'Situation')
+                        try:
+                            s = Situation.objects.get(pk=detail_id)
+                            return getattr(s, field_name, "")
+                        except Situation.DoesNotExist:
+                            return ""
+
+                    val = await _get_value()
+                    socket.context.map_detail_editing = field_name
+                    socket.context.map_detail_draft = str(val) if val else ""
+                    await self._broadcast_change(socket)
+                await self._refresh_map_detail(socket)
+                return
+
+            if event == "map_update_draft":
+                value = payload.get("value", "")
+                if isinstance(value, list):
+                    value = value[0] if value else ""
+                socket.context.map_detail_draft = value
+                return
+
+            if event == "map_cancel_edit":
+                detail_id = (socket.context.map_detail or {}).get("id", "")
+                field_name = socket.context.map_detail_editing
+                if detail_id and field_name:
+                    from .store import release_lock as _rel
+                    _rel("cards.situation", detail_id, field_name,
+                         socket.context.session_id)
+                socket.context.map_detail_editing = ""
+                socket.context.map_detail_draft = ""
+                await self._refresh_map_detail(socket)
+                await self._broadcast_change(socket)
+                return
+
+            if event == "map_save_edit":
+                detail_id = (socket.context.map_detail or {}).get("id", "")
+                field_name = socket.context.map_detail_editing
+                value = socket.context.map_detail_draft
+                if not detail_id or not field_name:
+                    return
+
+                from .store import get_lock_holder as _glh, release_lock as _rel
+                sid = socket.context.session_id
+                if _glh("cards.situation", detail_id, field_name) != sid:
+                    socket.context.map_detail_editing = ""
+                    socket.context.map_detail_draft = ""
+                    await self._refresh_map_detail(socket)
+                    return
+
+                from asgiref.sync import sync_to_async as _sta
+                from django.apps import apps as _apps_sv
+
+                @_sta(thread_sensitive=False)
+                def _save_field():
+                    Situation = _apps_sv.get_model('cards', 'Situation')
+                    try:
+                        s = Situation.objects.get(pk=detail_id)
+                        setattr(s, field_name, value)
+                        s.save(update_fields=[field_name])
+                    except Situation.DoesNotExist:
+                        pass
+
+                await _save_field()
+                _rel("cards.situation", detail_id, field_name, sid)
+                socket.context.map_detail_editing = ""
+                socket.context.map_detail_draft = ""
+                await self._refresh_map_detail(socket)
+                await self._load_map_data(socket)
+                await self._broadcast_change(socket)
+                return
+
+            if event == "start_river":
+                # Commit previous river if any, then enter river drawing mode
+                if socket.context.hex_current_river:
+                    await self._commit_river(socket)
+                socket.context.hex_river_drawing = True
+                socket.context.hex_active_symbol = ""
+                socket.context.hex_active_overlay = ""
+                socket.context.hex_overlay_mode = False
+                socket.context.hex_notes_mode = False
+                socket.context.hex_selected_hex = ""
+                socket.context.hex_selected_note = ""
+                socket.context.hex_note_html = ""
+                socket.context.hex_note_editing = False
+                socket.context.hex_current_river = []
+                await self._load_map_data(socket)
+                return
+
+            if event == "finish_river":
+                if socket.context.hex_current_river:
+                    await self._commit_river(socket)
+                socket.context.hex_current_river = []
+                socket.context.hex_river_drawing = False
+                await self._load_map_data(socket)
+                return
+
+            if event == "undo_river_point":
+                if socket.context.hex_current_river:
+                    socket.context.hex_current_river = socket.context.hex_current_river[:-1]
+                    await self._load_map_data(socket)
+                return
+
+            if event == "delete_last_river":
+                map_id = socket.context.hex_map_id
+                if map_id and socket.context.is_keeper:
+                    from asgiref.sync import sync_to_async as _sta
+
+                    @_sta(thread_sensitive=False)
+                    def _delete():
+                        hex_map = model.objects.get(pk=map_id)
+                        rivers = hex_map.rivers or []
+                        if rivers:
+                            rivers.pop()
+                            hex_map.rivers = rivers
+                            hex_map.save(update_fields=["rivers"])
+
+                    await _delete()
+                    await self._load_map_data(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "set_hex":
+                map_id = socket.context.hex_map_id
+                if not map_id or not socket.context.is_keeper or not socket.context.hex_map_edit:
+                    return
+                col = payload.get("col", "")
+                row = payload.get("row", "")
+                if col == "" or row == "":
+                    return
+                key = f"{col},{row}"
+
+                # Notes mode: select hex and load its note
+                if socket.context.hex_notes_mode:
+                    from asgiref.sync import sync_to_async as _sta_n
+
+                    @_sta_n(thread_sensitive=False)
+                    def _load_note():
+                        hex_map = model.objects.get(pk=map_id)
+                        notes = hex_map.notes or {}
+                        return notes.get(key, "")
+
+                    note = await _load_note()
+                    socket.context.hex_selected_hex = key
+                    socket.context.hex_selected_note = note
+                    socket.context.hex_note_html = render_markdown_safe(note) if note.strip() else ""
+                    socket.context.hex_note_editing = not note.strip()
+                    await self._load_map_data(socket)
+                    return
+
+                # River drawing mode: add hex to current river
+                if socket.context.hex_river_drawing:
+                    from alive.ui import _find_shared_edge
+                    current = socket.context.hex_current_river
+                    if current:
+                        # Validate adjacency
+                        lc, lr = map(int, current[-1].split(","))
+                        edge = _find_shared_edge(lc, lr, int(col), int(row))
+                        if edge is None:
+                            return  # not adjacent, ignore
+                    socket.context.hex_current_river = current + [key]
+                    await self._load_map_data(socket)
+                    return
+
+                # Overlay painting mode
+                if socket.context.hex_overlay_mode:
+                    overlay = socket.context.hex_active_overlay
+                    from asgiref.sync import sync_to_async as _sta
+
+                    # Barrier tool
+                    if overlay and overlay.startswith("barrier_"):
+                        barrier_arg = overlay.split("_", 1)[1]
+
+                        @_sta(thread_sensitive=False)
+                        def _toggle_barrier():
+                            hex_map = model.objects.get(pk=map_id)
+                            barriers = hex_map.barriers or {}
+                            edges = barriers.get(key, [])
+                            if barrier_arg == "eraser":
+                                # Remove all barriers from this hex
+                                barriers.pop(key, None)
+                            else:
+                                edge_i = int(barrier_arg)
+                                if edge_i in edges:
+                                    edges.remove(edge_i)
+                                else:
+                                    edges.append(edge_i)
+                                if edges:
+                                    barriers[key] = edges
+                                else:
+                                    barriers.pop(key, None)
+                            hex_map.barriers = barriers
+                            hex_map.save(update_fields=["barriers"])
+
+                        await _toggle_barrier()
+                        await self._load_map_data(socket)
+                        return
+
+                    # Regular overlay symbol
+                    @_sta(thread_sensitive=False)
+                    def _set_overlay():
+                        hex_map = model.objects.get(pk=map_id)
+                        overlays = hex_map.overlays or {}
+                        if overlay:
+                            overlays[key] = overlay
+                        else:
+                            overlays.pop(key, None)
+                        hex_map.overlays = overlays
+                        hex_map.save(update_fields=["overlays"])
+
+                    await _set_overlay()
+                    await self._load_map_data(socket)
+                    return
+
+                # Normal symbol painting mode
+                symbol = socket.context.hex_active_symbol
+
+                from asgiref.sync import sync_to_async as _sta2
+
+                @_sta2(thread_sensitive=False)
+                def _set_hex():
+                    hex_map = model.objects.get(pk=map_id)
+                    hexes = hex_map.hexes or {}
+                    if symbol:
+                        hexes[key] = symbol
+                    else:
+                        hexes.pop(key, None)
+                    hex_map.hexes = hexes
+                    hex_map.save(update_fields=["hexes"])
+
+                await _set_hex()
+                await self._load_map_data(socket)
+                await self._broadcast_change(socket)
+                return
+
+            if event == "roll_situation":
+                situation_id = socket.context.hand_active_situation_id
+                if situation_id:
+                    import random
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _roll():
+                        Situation = apps.get_model('cards', 'Situation')
+                        Hand = apps.get_model('cards', 'Hand')
+                        SituationCard = apps.get_model('cards', 'SituationCard')
+                        sit = Situation.objects.get(pk=situation_id)
+                        if sit.dice:
+                            return  # Already rolled
+                        originals = list(
+                            sit.cards.select_related('card', 'character').all()
+                        )
+                        n = len(originals)
+                        if n == 0:
+                            return
+                        sit.dice = [random.randint(1, 6) for _ in range(n + 1)]
+                        sit.save(update_fields=["dice"])
+                        # Create archived snapshot cards on the situation
+                        for cc in originals:
+                            SituationCard.objects.create(
+                                situation=sit,
+                                name=cc.card.name,
+                                notes=cc.card.notes or "",
+                                level=cc.level,
+                                character_name=cc.character.name if cc.character else "",
+                            )
+                        # Clear the M2M (snapshots replace it)
+                        sit.cards.clear()
+                        # Remove originals from their owners' hands
+                        for cc in originals:
+                            for hand in Hand.objects.filter(cards__pk=cc.pk):
+                                hand.cards.remove(cc.pk)
+
+                    await _roll()
+                    await self._refresh_view_async(socket)
+                    if socket.context.hand_is_player:
+                        await self._load_hand_data(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "assign_die":
+                card_id = payload.get("card_id", "")
+                die_index = payload.get("die_index", "")
+                situation_id = socket.context.hand_active_situation_id
+                if card_id and die_index != "" and situation_id:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _assign():
+                        Situation = apps.get_model('cards', 'Situation')
+                        sit = Situation.objects.get(pk=situation_id)
+                        if not sit.dice or sit.dice_assigned:
+                            return
+                        assignments = sit.assignments or {}
+                        assignments[str(card_id)] = int(die_index)
+                        sit.assignments = assignments
+                        sit.save(update_fields=["assignments"])
+
+                    await _assign()
+                    await self._refresh_view_async(socket)
+                    if socket.context.hand_is_player:
+                        await self._load_hand_data(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "unassign_die":
+                card_id = payload.get("card_id", "")
+                situation_id = socket.context.hand_active_situation_id
+                if card_id and situation_id:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _unassign():
+                        Situation = apps.get_model('cards', 'Situation')
+                        sit = Situation.objects.get(pk=situation_id)
+                        if sit.dice_assigned:
+                            return
+                        assignments = sit.assignments or {}
+                        assignments.pop(str(card_id), None)
+                        sit.assignments = assignments
+                        sit.save(update_fields=["assignments"])
+
+                    await _unassign()
+                    await self._refresh_view_async(socket)
+                    if socket.context.hand_is_player:
+                        await self._load_hand_data(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "lock_dice":
+                situation_id = socket.context.hand_active_situation_id
+                if situation_id:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _lock():
+                        Situation = apps.get_model('cards', 'Situation')
+                        sit = Situation.objects.get(pk=situation_id)
+                        if not sit.dice or sit.dice_assigned:
+                            return
+                        card_count = sit.situation_cards.count()
+                        if len(sit.assignments or {}) < card_count:
+                            return
+                        sit.dice_assigned = True
+                        sit.save(update_fields=["dice_assigned"])
+
+                    await _lock()
+                    await self._refresh_view_async(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "toggle_used_card":
+                card_id = payload.get("card_id", "")
+                situation_id = socket.context.hand_active_situation_id
+                if card_id and situation_id and socket.context.situation_dice_assigned:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+
+                    @_sta(thread_sensitive=False)
+                    def _toggle_used():
+                        SituationCard = apps.get_model('cards', 'SituationCard')
+                        sc = SituationCard.objects.get(pk=int(card_id), situation_id=situation_id)
+                        sc.used = not sc.used
+                        sc.save(update_fields=["used"])
+
+                    await _toggle_used()
+                    await self._refresh_view_async(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            # Quick dice rolls (sidebar)
+            if event == "quick_roll_d6":
+                import random
+                from alive.ui import render_die_svg
+                v = random.randint(1, 6)
+                socket.context.quick_d6 = v
+                socket.context.quick_d6_svg = render_die_svg(v, css_class="h-8 w-8")
+                return
+
+            if event == "quick_roll_d12":
+                import random
+                socket.context.quick_d12 = random.randint(1, 12)
+                return
+
             # Try field events first
             if await self.handle_field_event(event, payload, socket):
                 return
@@ -1187,6 +2060,11 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
             subscribed_channels = {store.channel}
             for info in inline_infos:
                 subscribed_channels.add(get_store(info["target_model"]).channel)
+            # Include Card channel if hand is active
+            if socket.context.hand_is_player:
+                from django.apps import apps as _apps
+                _Card = _apps.get_model('cards', 'Card')
+                subscribed_channels.add(get_store(_Card).channel)
             if event.name not in subscribed_channels:
                 return
 
@@ -1195,11 +2073,15 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
 
             if action in ("state_changed", "locks_released", "item_created", "item_deleted"):
                 await self._refresh_view_async(socket)
+                if socket.context.hand_is_player:
+                    await self._load_hand_data(socket)
             elif action == "conflict":
                 conflict_key = data.get("key", "")
                 if conflict_key in socket.context.editing:
                     del socket.context.editing[conflict_key]
                 await self._refresh_view_async(socket)
+                if socket.context.hand_is_player:
+                    await self._load_hand_data(socket)
 
         def _refresh_view(self, socket: LiveViewSocket[ModelContext]):
             """Sync refresh - schedules async refresh."""
@@ -1226,10 +2108,348 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     item_name = await self._get_item_name(socket.context.detail_item_id)
                     if item_name:
                         socket.context.breadcrumbs[-1] = {"label": item_name, "url": None}
+            # Load custom template data if applicable
+            await self._load_situation_data(socket)
+            await self._load_map_data(socket)
 
         async def _broadcast_change(self, socket: LiveViewSocket[ModelContext]):
             """Broadcast state change to other clients."""
             await socket.broadcast(store.channel, {"action": "state_changed"})
+
+        async def _load_situation_data(self, socket: LiveViewSocket[ModelContext]):
+            """Load situation-specific context when viewing the Situation model."""
+            if conf.template != "situation.html":
+                return
+
+            game_id = socket.context.frame.get("game_id")
+            if not game_id:
+                return
+
+            from asgiref.sync import sync_to_async as _sta
+            from django.apps import apps
+
+            @_sta(thread_sensitive=False)
+            def _fetch():
+                Situation = apps.get_model('cards', 'Situation')
+
+                situations = list(
+                    Situation.objects.filter(game_id=game_id).order_by('-pk')
+                )
+                if not situations:
+                    return None, [], [], [], {}, False, False
+
+                active = situations[0]
+                past = [{"id": str(s.pk), "name": s.name} for s in situations[1:]]
+                dice = active.dice or []
+                assignments = active.assignments or {}
+
+                # Compute which die indices are already assigned
+                assigned_indices = set(assignments.values())
+
+                # Load cards in the active situation
+                from cards.models.card import get_bands_for_level, get_band_for_die
+                cards = []
+                if dice:
+                    # Post-roll: read from SituationCard snapshots
+                    for sc in active.situation_cards.all():
+                        card_id = str(sc.pk)
+                        assigned_die_index = assignments.get(card_id)
+                        assigned_die_value = None
+                        assigned_band_label = None
+                        if assigned_die_index is not None and assigned_die_index < len(dice):
+                            assigned_die_value = dice[assigned_die_index]
+                            assigned_band_label = get_band_for_die(sc.level, assigned_die_value)
+
+                        card_bands = get_bands_for_level(sc.level)
+                        for band in card_bands:
+                            band["highlighted"] = (band["label"] == assigned_band_label) if assigned_band_label else False
+
+                        available_dice = []
+                        for idx, val in enumerate(dice):
+                            if idx not in assigned_indices:
+                                available_dice.append({"index": idx, "value": val})
+
+                        cards.append({
+                            "id": card_id,
+                            "name": sc.name,
+                            "notes": sc.notes,
+                            "character_name": sc.character_name,
+                            "level": sc.level,
+                            "bands": card_bands,
+                            "assigned_die_value": assigned_die_value,
+                            "assigned_die_index": assigned_die_index,
+                            "available_dice": available_dice,
+                            "used": sc.used,
+                        })
+                else:
+                    # Pre-roll: read from CharacterCard M2M
+                    for cc in active.cards.select_related('card', 'character').all():
+                        cards.append({
+                            "id": str(cc.pk),
+                            "name": cc.card.name,
+                            "notes": cc.card.notes or "",
+                            "character_name": cc.character.name if cc.character else "",
+                            "level": cc.level,
+                            "bands": get_bands_for_level(cc.level),
+                            "assigned_die_value": None,
+                            "assigned_die_index": None,
+                            "available_dice": [],
+                        })
+
+                return active, cards, past, dice, assignments, active.dice_assigned, active.resolved
+
+            active, cards, past, dice, assignments, dice_assigned, resolved = await _fetch()
+
+            if active is None:
+                socket.context.hand_active_situation_id = None
+                socket.context.active_situation_name = ""
+                socket.context.active_situation_notes = ""
+                socket.context.situation_cards = []
+                socket.context.past_situations = []
+                socket.context.situation_dice = []
+                socket.context.situation_assignments = {}
+                socket.context.situation_dice_assigned = False
+                socket.context.situation_resolved = False
+                socket.context.situation_all_assigned = False
+                return
+
+            # Build enriched dice list for display with SVGs
+            from alive.ui import render_die_svg, DIE_CSS
+            assigned_indices = set(assignments.values()) if assignments else set()
+            # Reverse mapping: die index -> card_id
+            index_to_card = {v: k for k, v in assignments.items()} if assignments else {}
+            dice_display = [
+                {"index": i, "value": v, "assigned": i in assigned_indices,
+                 "card_id": index_to_card.get(i, ""),
+                 "svg": render_die_svg(v, css_class="h-8 w-8")}
+                for i, v in enumerate(dice)
+            ] if dice else []
+
+            # Add SVGs to card data
+            dashed_svg = render_die_svg(0, css_class="h-8 w-8", dashed=True)
+            for card in cards:
+                if card["assigned_die_value"] is not None:
+                    card["assigned_die_svg"] = render_die_svg(card["assigned_die_value"], css_class="h-8 w-8")
+                card["placeholder_svg"] = dashed_svg
+                # Add SVGs to available dice
+                for die in card.get("available_dice", []):
+                    die["svg"] = render_die_svg(die["value"], css_class="h-8 w-8")
+
+            socket.context.hand_active_situation_id = active.pk
+            socket.context.active_situation_name = active.name
+            socket.context.active_situation_notes = active.notes or ""
+            socket.context.situation_cards = cards
+            socket.context.past_situations = past
+            socket.context.situation_dice = dice_display
+            socket.context.situation_assignments = assignments
+            socket.context.situation_dice_assigned = dice_assigned
+            socket.context.situation_resolved = resolved
+            socket.context.situation_all_assigned = bool(dice and cards and len(assignments) >= len(cards))
+
+            # Load keeper's available cards for the picker
+            if socket.context.is_keeper and socket.context.keeper_character_id and not dice:
+                keeper_char_id = socket.context.keeper_character_id
+
+                @_sta(thread_sensitive=False)
+                def _fetch_keeper_cards():
+                    CharacterCard = apps.get_model('cards', 'CharacterCard')
+                    situation_card_pks = set(
+                        active.cards.values_list('pk', flat=True)
+                    ) if active else set()
+                    return [
+                        {"id": str(cc.pk), "name": cc.card.name, "level": cc.level}
+                        for cc in CharacterCard.objects.filter(
+                            character_id=keeper_char_id
+                        ).select_related('card')
+                        if cc.pk not in situation_card_pks
+                    ]
+
+                socket.context.keeper_available_cards = await _fetch_keeper_cards()
+
+        async def _commit_river(self, socket: LiveViewSocket[ModelContext]):
+            """Save the current in-progress river to the database."""
+            current = socket.context.hex_current_river
+            map_id = socket.context.hex_map_id
+            if not current or len(current) < 2 or not map_id:
+                socket.context.hex_current_river = []
+                return
+
+            from asgiref.sync import sync_to_async as _sta
+
+            river_to_save = list(current)
+
+            @_sta(thread_sensitive=False)
+            def _save():
+                hex_map = model.objects.get(pk=map_id)
+                rivers = hex_map.rivers or []
+                rivers.append(river_to_save)
+                hex_map.rivers = rivers
+                hex_map.save(update_fields=["rivers"])
+
+            await _save()
+            socket.context.hex_current_river = []
+            await self._broadcast_change(socket)
+
+        async def _close_map_detail(self, socket: LiveViewSocket[ModelContext]):
+            """Close map detail popup, releasing any locks."""
+            detail_id = (socket.context.map_detail or {}).get("id", "")
+            field_name = socket.context.map_detail_editing
+            if detail_id and field_name:
+                from .store import release_lock as _rel
+                _rel("cards.situation", detail_id, field_name,
+                     socket.context.session_id)
+            socket.context.map_detail = {}
+            socket.context.map_detail_editing = ""
+            socket.context.map_detail_draft = ""
+
+        async def _refresh_map_detail(self, socket: LiveViewSocket[ModelContext]):
+            """Refresh detail popup data from DB."""
+            detail_id = (socket.context.map_detail or {}).get("id", "")
+            if not detail_id:
+                return
+
+            from asgiref.sync import sync_to_async as _sta
+            from django.apps import apps as _apps_rd
+            from .store import get_lock_holder as _glh
+            from .components.editable_field import render_markdown_safe
+
+            @_sta(thread_sensitive=False)
+            def _fetch_detail():
+                Situation = _apps_rd.get_model('cards', 'Situation')
+                try:
+                    s = Situation.objects.get(pk=detail_id)
+                    return {
+                        "id": str(s.pk),
+                        "name": s.name,
+                        "notes": s.notes,
+                        "type": s.situation_type,
+                        "type_label": s.get_situation_type_display(),
+                        "location": s.location,
+                    }
+                except Situation.DoesNotExist:
+                    return None
+
+            data = await _fetch_detail()
+            if not data:
+                socket.context.map_detail = {}
+                socket.context.map_detail_editing = ""
+                socket.context.map_detail_draft = ""
+                return
+
+            sid = socket.context.session_id
+            data["name_locked"] = (
+                _glh("cards.situation", data["id"], "name") not in (None, sid)
+            )
+            data["notes_locked"] = (
+                _glh("cards.situation", data["id"], "notes") not in (None, sid)
+            )
+            data["notes_html"] = (
+                render_markdown_safe(data["notes"]) if data["notes"] else ""
+            )
+            socket.context.map_detail = data
+
+        async def _load_map_data(self, socket: LiveViewSocket[ModelContext]):
+            """Load map-specific context when viewing the HexMap model."""
+            if conf.template != "map.html":
+                return
+
+            from asgiref.sync import sync_to_async as _sta
+            from alive.ui import render_hex_map, render_hex_palette, render_overlay_palette, get_adjacent_hexes
+
+            edit_mode = socket.context.hex_map_edit and socket.context.is_keeper
+            show_overlays = socket.context.hex_show_overlays and socket.context.is_keeper
+
+            # Get the HexMap instance from the game context
+            game_id = socket.context.frame.get("game_id")
+
+            @_sta(thread_sensitive=False)
+            def _fetch_map():
+                qs = model.objects.all()
+                if game_id:
+                    qs = qs.filter(game_id=game_id)
+                hex_map = qs.first()
+                if not hex_map and game_id:
+                    hex_map = model.objects.create(name="Map", game_id=game_id)
+                if hex_map:
+                    return hex_map.pk, hex_map.hexes or {}, hex_map.rivers or [], hex_map.overlays or {}, hex_map.barriers or {}, hex_map.party_location or "", hex_map.party_trail or []
+                return None, {}, [], {}, {}, "", []
+
+            map_id, hexes, rivers, overlays, barriers, party_loc, party_trail = await _fetch_map()
+
+            # Fetch timeline data (situations/notes for this game)
+            timeline_entries = []
+            if game_id:
+                from django.apps import apps as _apps_tl
+
+                @_sta(thread_sensitive=False)
+                def _fetch_timeline():
+                    Situation = _apps_tl.get_model('cards', 'Situation')
+                    return list(
+                        Situation.objects.filter(game_id=game_id)
+                        .exclude(name="")
+                        .order_by('-pk')
+                        .values('pk', 'name', 'situation_type', 'location', 'notes')
+                    )
+
+                raw_entries = await _fetch_timeline()
+
+                # Build template-ready entries with flags
+                for i, e in enumerate(raw_entries):
+                    is_last = i == len(raw_entries) - 1
+                    entry = {
+                        "id": str(e['pk']),
+                        "name": e['name'],
+                        "situation_type": e['situation_type'],
+                        "location": e['location'],
+                        "is_first": i == 0,
+                        "is_last": is_last,
+                        "is_current": is_last,
+                    }
+                    timeline_entries.append(entry)
+
+                # Build location list for SVG hover highlights (chronological order)
+                timeline_locs = [
+                    (str(e['pk']), e['location'])
+                    for e in reversed(raw_entries)
+                ]
+
+            socket.context.timeline_entries = timeline_entries
+            socket.context.party_location = party_loc
+
+            # Compute adjacent hexes for movement (keeper, non-edit mode)
+            adjacent = None
+            if socket.context.is_keeper and not edit_mode:
+                if party_loc:
+                    pc, pr = map(int, party_loc.split(","))
+                    adjacent = get_adjacent_hexes(pc, pr)
+                else:
+                    # No party yet: all hexes are valid for initial placement
+                    adjacent = {f"{c},{r}" for c in range(12) for r in range(12)}
+
+            # Include the in-progress river for preview
+            all_rivers = list(rivers)
+            if socket.context.hex_current_river and len(socket.context.hex_current_river) >= 2:
+                all_rivers.append(socket.context.hex_current_river)
+
+            socket.context.hex_map_id = map_id
+            socket.context.hex_map_svg = render_hex_map(
+                hexes=hexes, rivers=all_rivers, overlays=overlays,
+                barriers=barriers, edit_mode=edit_mode, show_overlays=show_overlays,
+                party_location=party_loc, party_trail=party_trail[-3:],
+                adjacent_hexes=adjacent,
+                timeline_locations=timeline_locs if game_id else None,
+            )
+            if edit_mode:
+                socket.context.hex_map_palette = render_hex_palette(
+                    active_symbol=socket.context.hex_active_symbol,
+                )
+                socket.context.hex_overlay_palette = render_overlay_palette(
+                    active_overlay=socket.context.hex_active_overlay,
+                )
+
+            # Refresh detail popup if open
+            if socket.context.map_detail:
+                await self._refresh_map_detail(socket)
 
         async def _load_hand_data(self, socket: LiveViewSocket[ModelContext]):
             """Load hand data for the player's character."""
@@ -1240,37 +2460,57 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
             from asgiref.sync import sync_to_async as _sta
             from django.apps import apps
 
+            game_id = socket.context.frame.get("game_id")
+
             @_sta(thread_sensitive=False)
             def _fetch():
                 CharacterCard = apps.get_model('cards', 'CharacterCard')
                 Hand = apps.get_model('cards', 'Hand')
-                Card = apps.get_model('cards', 'Card')
+                Situation = apps.get_model('cards', 'Situation')
 
                 card_count = CharacterCard.objects.filter(character_id=character_id).count()
 
                 hand = Hand.objects.filter(character_id=character_id).order_by('-id').first()
                 hand_cards = []
                 if hand:
-                    for cc in hand.cards.select_related('card', 'tag').all():
-                        card = cc.card
-                        # Build bands from level
+                    for cc in hand.cards.select_related('card').all():
                         from cards.models.card import get_bands_for_level
-                        bands_data = get_bands_for_level(cc.level)
-
                         hand_cards.append({
-                            "name": card.name,
-                            "notes_html": render_markdown_safe(card.notes) if card.notes else "",
-                            "bands": bands_data,
-                            "tag": str(cc.tag) if cc.tag else "",
+                            "id": str(cc.pk),
+                            "name": cc.card.name,
+                            "notes": cc.card.notes or "",
+                            "level": cc.level,
+                            "bands": get_bands_for_level(cc.level),
                         })
 
-                return card_count, hand_cards
+                # Look up active situation (latest by pk for this game)
+                active_sit = None
+                situation_card_pks = set()
+                if game_id:
+                    active_sit = Situation.objects.filter(game_id=game_id).order_by('-pk').first()
+                    if active_sit:
+                        situation_card_pks = set(
+                            active_sit.cards.values_list('pk', flat=True)
+                        )
 
-            card_count, hand_cards = await _fetch()
+                # Mark cards that are in the active situation
+                for card in hand_cards:
+                    card["in_situation"] = int(card["id"]) in situation_card_pks
+
+                sit_dice = active_sit.dice if active_sit else []
+
+                return card_count, hand_cards, active_sit, sit_dice
+
+            card_count, hand_cards, active_sit, sit_dice = await _fetch()
+
             socket.context.hand_card_count = card_count
             socket.context.hand_drawn = len(hand_cards) > 0
             socket.context.hand_cards = hand_cards
             socket.context.hand_draw_options = list(range(1, card_count + 1))
+            socket.context.hand_active_situation_id = active_sit.pk if active_sit else None
+            # Only set situation_dice if not already set by _load_situation_data (which has richer data)
+            if not socket.context.situation_dice:
+                socket.context.situation_dice = sit_dice
 
         async def _build_grid_data(self, player_id: int | None = None) -> list[dict]:
             """Build simplified item data for the grid view."""
@@ -1445,6 +2685,12 @@ def create_index_liveview(models_info: list[dict]) -> Type[LiveView]:
         async def mount(self, socket: LiveViewSocket[IndexContext], session: dict[str, Any]):
             player_id = session.get("player_id")
 
+            # Frame context from app
+            from alive import _frame_context_provider
+            frame_data = {}
+            if _frame_context_provider:
+                frame_data = await _frame_context_provider(session)
+
             # Filter models by visibility
             from asgiref.sync import sync_to_async as _sta
             visible = []
@@ -1458,6 +2704,8 @@ def create_index_liveview(models_info: list[dict]) -> Type[LiveView]:
                             continue
                 visible.append(info)
 
-            socket.context = IndexContext(items=visible)
+            socket.context = IndexContext(items=visible, frame=frame_data)
+            from alive.ui import render_die_svg
+            socket.context.quick_d6_svg = render_die_svg(socket.context.quick_d6, css_class="h-8 w-8")
 
     return IndexLiveView

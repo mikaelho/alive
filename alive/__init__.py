@@ -29,6 +29,7 @@ Usage:
 """
 
 import time as _time
+from pathlib import Path
 
 from .conf import AliveConf, TagFieldConf
 from .mixin import AliveMixin
@@ -48,6 +49,9 @@ CACHE_BUST = str(int(_time.time()))
 
 # Global storage for registered models info (for drawer navigation)
 _registered_models: list[dict] = []
+
+# Frame context provider callback (set by app via setup_alive)
+_frame_context_provider = None
 
 
 def get_registered_models(player_id=None) -> list[dict]:
@@ -77,7 +81,7 @@ def static_url(path: str) -> str:
     return f"{path}?v={CACHE_BUST}"
 
 
-def setup_alive(app, url_prefix: str = "/alive"):
+def setup_alive(app, url_prefix: str = "/alive", frame_context_provider=None):
     """
     Set up Alive for a PyView application.
 
@@ -90,9 +94,19 @@ def setup_alive(app, url_prefix: str = "/alive"):
     Args:
         app: The PyView application instance
         url_prefix: URL prefix for alive routes (default: "/alive")
+        frame_context_provider: Async callable(session) -> dict providing frame data
     """
-    global _registered_models
+    global _registered_models, _frame_context_provider
     from django.apps import apps
+    from pyview.vendor import ibis
+    from pyview.vendor.ibis.loaders import FileReloader
+
+    # Configure Ibis template loader for {% extends %} and {% include %}
+    template_dir = str(Path(__file__).parent / "templates")
+    ibis.loader = FileReloader(template_dir)
+
+    # Store frame context provider for use by views
+    _frame_context_provider = frame_context_provider
 
     # Register signals
     setup_signals()
