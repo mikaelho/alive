@@ -107,8 +107,9 @@ class AliveMixin:
             if field.name in ('created_at', 'updated_at', 'id', 'pk'):
                 continue
 
-            # Determine if required
-            required = not getattr(field, 'blank', True)
+            # Determine if required (fields with defaults are never required in create forms)
+            has_default = field.has_default()
+            required = not getattr(field, 'blank', True) and not has_default
 
             # Determine field type
             field_type = 'text'

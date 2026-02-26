@@ -10,6 +10,7 @@
                 phx-click="toggle_map_edit">
             {% if hex_map_edit %}Done Editing{% else %}Edit Map{% endif %}
         </button>
+        <button class="btn btn-sm btn-ghost" phx-click="open_copy_map">Copy Map</button>
     </div>
     {% endif %}
 
@@ -166,6 +167,12 @@
         </div>
         <div class="md:w-56 md:shrink-0">
             <div class="flex gap-1 mb-4">
+                {% if is_keeper %}
+                <button class="btn btn-sm btn-ghost flex-1 gap-1" phx-click="open_time_advance">
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                    Advance
+                </button>
+                {% endif %}
                 <button class="btn btn-sm btn-ghost flex-1 gap-1" phx-click="open_map_create" phx-value-type="note">
                     <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
                     Note
@@ -176,11 +183,21 @@
                 </button>
             </div>
             {% if timeline_entries %}
-            <h3 class="text-sm text-base-content/50 uppercase font-semibold mb-2">Mission Log</h3>
+            <h3 class="text-sm text-base-content/50 uppercase font-semibold mb-2">Mission Log{% if current_game_time %} &mdash; {{current_game_time}}{% endif %}</h3>
             <ul class="timeline timeline-vertical timeline-compact" style="--timeline-color: color-mix(in oklch, var(--color-base-content) 30%, transparent);">
                 {% for entry in timeline_entries %}
-                <li data-highlight-entry="{{entry.id}}">
+                {% if entry.time_separator %}
+                <li>
                     {% if not entry.is_first %}<hr style="background: var(--timeline-color);"/>{% endif %}
+                    <div class="timeline-middle"><div class="w-3.5"></div></div>
+                    <div class="timeline-end py-1 px-2">
+                        <span class="text-xs text-base-content/40 uppercase font-semibold">{{entry.time_separator}}</span>
+                    </div>
+                    <hr style="background: var(--timeline-color);"/>
+                </li>
+                {% endif %}
+                <li data-highlight-entry="{{entry.id}}">
+                    {% if not entry.is_first and not entry.time_separator %}<hr style="background: var(--timeline-color);"/>{% endif %}
                     <div class="timeline-middle">
                         <svg class="h-3.5 w-3.5" viewBox="0 0 14 14">
                             <circle cx="7" cy="7" r="5" fill="var(--color-base-content)" opacity="0.3"/>
@@ -189,6 +206,7 @@
                     {% if entry.name %}
                     <div class="timeline-end py-1 px-2">
                         <span class="cursor-pointer text-sm" phx-click="open_map_detail" phx-value-id="{{entry.id}}">{{entry.name}}</span>
+                        {% if entry.shift %}<span class="text-xs text-base-content/40 ml-1">{{entry.shift}}</span>{% endif %}
                     </div>
                     {% endif %}
                     {% if not entry.is_last %}<hr style="background: var(--timeline-color);"/>{% endif %}
@@ -221,6 +239,97 @@
                         <div class="flex justify-end gap-2 mt-4">
                             <button type="button" class="btn btn-ghost" phx-click="map_cancel_create">Cancel</button>
                             <button type="submit" class="btn btn-primary" phx-click="map_save_create">Create</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if time_advance_open %}
+    <div class="fixed inset-0 z-50">
+        <div class="fixed inset-0 bg-black/30" phx-click="time_advance_cancel"></div>
+        <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+            <div class="bg-base-100 rounded-lg shadow-lg w-full max-w-sm pointer-events-auto">
+                <div class="p-4">
+                    <h2 class="text-lg font-bold mb-3">Advance Time</h2>
+                    <form phx-change="time_advance_update" phx-submit="time_advance_save">
+                        <fieldset class="fieldset w-full">
+                            <legend class="fieldset-legend">Age</legend>
+                            <input type="text" class="input w-full" name="age" value="{{time_advance_age}}" autocomplete="off" placeholder="e.g. First Age"/>
+                        </fieldset>
+                        <fieldset class="fieldset w-full mt-2">
+                            <legend class="fieldset-legend">Year</legend>
+                            <div class="flex gap-2 items-center">
+                                <input type="number" class="input flex-1" name="year" value="{{time_advance_year}}" min="1" autocomplete="off"/>
+                                <button type="button" class="btn btn-sm btn-ghost" phx-click="time_advance_next" phx-value-field="year">+</button>
+                            </div>
+                        </fieldset>
+                        <fieldset class="fieldset w-full mt-2">
+                            <legend class="fieldset-legend">Season</legend>
+                            <div class="flex gap-2 items-center">
+                                <select class="select flex-1" name="season">
+                                    <option value="spring" {% if time_advance_season == "spring" %}selected{% endif %}>Spring</option>
+                                    <option value="harvest" {% if time_advance_season == "harvest" %}selected{% endif %}>Harvest</option>
+                                    <option value="winter" {% if time_advance_season == "winter" %}selected{% endif %}>Winter</option>
+                                </select>
+                                <button type="button" class="btn btn-sm btn-ghost" phx-click="time_advance_next" phx-value-field="season">+</button>
+                            </div>
+                        </fieldset>
+                        <fieldset class="fieldset w-full mt-2">
+                            <legend class="fieldset-legend">Day</legend>
+                            <div class="flex gap-2 items-center">
+                                <input type="number" class="input flex-1" name="day" value="{{time_advance_day}}" min="1" autocomplete="off"/>
+                                <button type="button" class="btn btn-sm btn-ghost" phx-click="time_advance_next" phx-value-field="day">+</button>
+                            </div>
+                        </fieldset>
+                        <fieldset class="fieldset w-full mt-2">
+                            <legend class="fieldset-legend">Shift</legend>
+                            <div class="flex gap-2 items-center">
+                                <select class="select flex-1" name="shift">
+                                    <option value="morning" {% if time_advance_shift == "morning" %}selected{% endif %}>Morning</option>
+                                    <option value="afternoon" {% if time_advance_shift == "afternoon" %}selected{% endif %}>Afternoon</option>
+                                    <option value="night" {% if time_advance_shift == "night" %}selected{% endif %}>Night</option>
+                                </select>
+                                <button type="button" class="btn btn-sm btn-ghost" phx-click="time_advance_next" phx-value-field="shift">+</button>
+                            </div>
+                        </fieldset>
+                        <div class="flex justify-end gap-2 mt-4">
+                            <button type="button" class="btn btn-ghost" phx-click="time_advance_cancel">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Save</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if copy_map_open %}
+    <div class="fixed inset-0 z-50">
+        <div class="fixed inset-0 bg-black/30" phx-click="copy_map_cancel"></div>
+        <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+            <div class="bg-base-100 rounded-lg shadow-lg w-full max-w-sm pointer-events-auto">
+                <div class="p-4">
+                    <h2 class="text-lg font-bold mb-3">Copy Map to Game</h2>
+                    <p class="text-sm text-base-content/70 mb-3">Copies terrain, rivers, overlays and barriers. Does not copy notes or party location.</p>
+                    {% if copy_map_error %}
+                    <div class="alert alert-error mb-3">{{copy_map_error}}</div>
+                    {% endif %}
+                    <form phx-change="copy_map_update" phx-submit="copy_map_save">
+                        <fieldset class="fieldset w-full">
+                            <legend class="fieldset-legend">Target Game *</legend>
+                            <select class="select w-full" name="target">
+                                <option value="">-- Select --</option>
+                                {% for g in copy_map_games %}
+                                <option value="{{g.id}}" {% if copy_map_target == g.id %}selected{% endif %}>{{g.name}}</option>
+                                {% endfor %}
+                            </select>
+                        </fieldset>
+                        <div class="flex justify-end gap-2 mt-4">
+                            <button type="button" class="btn btn-ghost" phx-click="copy_map_cancel">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Copy</button>
                         </div>
                     </form>
                 </div>
@@ -305,4 +414,5 @@
 
     {% endif %}
 
+</div>
 {% include "frame_bottom.html" %}

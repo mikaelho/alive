@@ -170,6 +170,20 @@ class ModelContext:
     map_detail_draft: str = ""
     # Map situation overlay (full situation mode on map page)
     map_situation_active: bool = False
+    # Copy map modal
+    copy_map_open: bool = False
+    copy_map_games: list[dict] = field(default_factory=list)
+    copy_map_target: str = ""
+    copy_map_error: str = ""
+    # Time advance modal
+    time_advance_open: bool = False
+    time_advance_age: str = ""
+    time_advance_year: str = ""
+    time_advance_season: str = ""
+    time_advance_day: str = ""
+    time_advance_shift: str = ""
+    # Current game time display
+    current_game_time: str = ""
 
 
 def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive") -> Type[LiveView]:
@@ -1727,13 +1741,16 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 def _create_entry():
                     Situation = _apps_mc.get_model('cards', 'Situation')
                     HexMap = _apps_mc.get_model('cards', 'HexMap')
+                    Game = _apps_mc.get_model('cards', 'Game')
                     loc = ""
                     hm = HexMap.objects.filter(game_id=game_id).first()
                     if hm and hm.party_location:
                         loc = hm.party_location
+                    game = Game.objects.get(pk=game_id)
                     return Situation.objects.create(
                         name=name, notes=notes, game_id=game_id,
                         situation_type=sit_type, location=loc,
+                        game_time=game.game_time or {},
                     )
 
                 new_sit = await _create_entry()
@@ -1744,6 +1761,202 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 socket.context.map_create_error = ""
                 await self._load_map_data(socket)
                 await self._broadcast_change(socket)
+                return
+
+            # ── Time advance ──────────────────────────────────────
+
+            if event == "open_time_advance":
+                if not socket.context.is_keeper:
+                    return
+                game_id = socket.context.frame.get("game_id")
+                if not game_id:
+                    return
+                from asgiref.sync import sync_to_async as _sta
+                from django.apps import apps as _apps_ta
+
+                @_sta(thread_sensitive=False)
+                def _get_game_time():
+                    Game = _apps_ta.get_model('cards', 'Game')
+                    return Game.objects.get(pk=game_id).game_time or {}
+
+                current = await _get_game_time()
+                from cards.models.game import advance_shift, SEASONS, SHIFTS
+                advanced = advance_shift(current) if current else {
+                    "age": "", "year": 1, "season": "spring", "day": 1, "shift": "morning",
+                }
+                socket.context.time_advance_age = advanced.get("age", "")
+                socket.context.time_advance_year = str(advanced.get("year", 1))
+                socket.context.time_advance_season = advanced.get("season", "spring")
+                socket.context.time_advance_day = str(advanced.get("day", 1))
+                socket.context.time_advance_shift = advanced.get("shift", "morning")
+                socket.context.time_advance_open = True
+                return
+
+            if event == "time_advance_update":
+                if not socket.context.is_keeper:
+                    return
+                for key in ("age", "year", "season", "day", "shift"):
+                    val = payload.get(key)
+                    if val is not None:
+                        if isinstance(val, list):
+                            val = val[0]
+                        setattr(socket.context, f"time_advance_{key}", val)
+                return
+
+            if event == "time_advance_next":
+                if not socket.context.is_keeper:
+                    return
+                field = payload.get("field", "")
+                if isinstance(field, list):
+                    field = field[0]
+                from cards.models.game import SEASONS, SHIFTS
+                if field == "year":
+                    try:
+                        y = int(socket.context.time_advance_year)
+                    except (ValueError, TypeError):
+                        y = 1
+                    socket.context.time_advance_year = str(y + 1)
+                elif field == "season":
+                    idx = SEASONS.index(socket.context.time_advance_season) if socket.context.time_advance_season in SEASONS else 0
+                    if idx + 1 < len(SEASONS):
+                        socket.context.time_advance_season = SEASONS[idx + 1]
+                    else:
+                        socket.context.time_advance_season = SEASONS[0]
+                        try:
+                            y = int(socket.context.time_advance_year)
+                        except (ValueError, TypeError):
+                            y = 1
+                        socket.context.time_advance_year = str(y + 1)
+                    socket.context.time_advance_day = "1"
+                elif field == "day":
+                    try:
+                        d = int(socket.context.time_advance_day)
+                    except (ValueError, TypeError):
+                        d = 1
+                    socket.context.time_advance_day = str(d + 1)
+                elif field == "shift":
+                    idx = SHIFTS.index(socket.context.time_advance_shift) if socket.context.time_advance_shift in SHIFTS else 0
+                    if idx + 1 < len(SHIFTS):
+                        socket.context.time_advance_shift = SHIFTS[idx + 1]
+                    else:
+                        socket.context.time_advance_shift = SHIFTS[0]
+                        try:
+                            d = int(socket.context.time_advance_day)
+                        except (ValueError, TypeError):
+                            d = 1
+                        socket.context.time_advance_day = str(d + 1)
+                return
+
+            if event == "time_advance_save":
+                if not socket.context.is_keeper:
+                    return
+                game_id = socket.context.frame.get("game_id")
+                if not game_id:
+                    return
+                try:
+                    year_val = int(socket.context.time_advance_year)
+                except (ValueError, TypeError):
+                    year_val = 1
+                try:
+                    day_val = int(socket.context.time_advance_day)
+                except (ValueError, TypeError):
+                    day_val = 1
+                new_time = {
+                    "age": socket.context.time_advance_age,
+                    "year": year_val,
+                    "season": socket.context.time_advance_season,
+                    "day": day_val,
+                    "shift": socket.context.time_advance_shift,
+                }
+                from asgiref.sync import sync_to_async as _sta
+                from django.apps import apps as _apps_ts
+
+                @_sta(thread_sensitive=False)
+                def _save_time():
+                    Game = _apps_ts.get_model('cards', 'Game')
+                    Game.objects.filter(pk=game_id).update(game_time=new_time)
+
+                await _save_time()
+                socket.context.time_advance_open = False
+                from cards.models.game import format_time
+                socket.context.current_game_time = format_time(new_time)
+                await self._broadcast_change(socket)
+                return
+
+            if event == "time_advance_cancel":
+                socket.context.time_advance_open = False
+                return
+
+            # ── Copy map ──────────────────────────────────────────
+
+            if event == "open_copy_map":
+                if not socket.context.is_keeper:
+                    return
+                game_id = socket.context.frame.get("game_id")
+                if not game_id:
+                    return
+                from asgiref.sync import sync_to_async as _sta
+                from django.apps import apps as _apps_cm
+
+                @_sta(thread_sensitive=False)
+                def _get_games():
+                    Game = _apps_cm.get_model('cards', 'Game')
+                    return list(
+                        Game.objects.exclude(pk=game_id)
+                        .order_by('name')
+                        .values('pk', 'name')
+                    )
+
+                games = await _get_games()
+                socket.context.copy_map_games = [
+                    {"id": str(g["pk"]), "name": g["name"]} for g in games
+                ]
+                socket.context.copy_map_target = ""
+                socket.context.copy_map_error = ""
+                socket.context.copy_map_open = True
+                return
+
+            if event == "copy_map_update":
+                val = payload.get("target", "")
+                if isinstance(val, list):
+                    val = val[0]
+                socket.context.copy_map_target = val
+                return
+
+            if event == "copy_map_save":
+                if not socket.context.is_keeper:
+                    return
+                target_id = socket.context.copy_map_target
+                if not target_id:
+                    socket.context.copy_map_error = "Select a target game"
+                    return
+                map_id = socket.context.hex_map_id
+                if not map_id:
+                    return
+                from asgiref.sync import sync_to_async as _sta
+                from django.apps import apps as _apps_cmc
+
+                @_sta(thread_sensitive=False)
+                def _copy():
+                    HexMap = _apps_cmc.get_model('cards', 'HexMap')
+                    src = HexMap.objects.get(pk=map_id)
+                    # Delete existing map in target game if any
+                    HexMap.objects.filter(game_id=int(target_id)).delete()
+                    HexMap.objects.create(
+                        name=src.name,
+                        game_id=int(target_id),
+                        hexes=src.hexes or {},
+                        rivers=src.rivers or [],
+                        overlays=src.overlays or {},
+                        barriers=src.barriers or {},
+                    )
+
+                await _copy()
+                socket.context.copy_map_open = False
+                return
+
+            if event == "copy_map_cancel":
+                socket.context.copy_map_open = False
                 return
 
             if event == "cancel_map_situation":
@@ -2599,18 +2812,28 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 @_sta(thread_sensitive=False)
                 def _fetch_timeline():
                     Situation = _apps_tl.get_model('cards', 'Situation')
-                    return list(
+                    Game = _apps_tl.get_model('cards', 'Game')
+                    entries = list(
                         Situation.objects.filter(game_id=game_id)
                         .exclude(name="")
                         .order_by('-pk')
-                        .values('pk', 'name', 'situation_type', 'location', 'notes')
+                        .values('pk', 'name', 'situation_type', 'location', 'notes', 'game_time')
                     )
+                    game = Game.objects.get(pk=game_id)
+                    return entries, game.game_time or {}
 
-                raw_entries = await _fetch_timeline()
+                raw_entries, current_game_time = await _fetch_timeline()
 
-                # Build template-ready entries with flags
+                from cards.models.game import format_time, time_group_key
+                socket.context.current_game_time = format_time(current_game_time)
+
+                # Build template-ready entries with time separators
+                prev_group = None
                 for i, e in enumerate(raw_entries):
                     is_last = i == len(raw_entries) - 1
+                    gt = e.get('game_time') or {}
+                    group = time_group_key(gt)
+                    shift_label = gt.get("shift", "").title() if gt else ""
                     entry = {
                         "id": str(e['pk']),
                         "name": e['name'],
@@ -2619,7 +2842,11 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                         "is_first": i == 0,
                         "is_last": is_last,
                         "is_current": is_last,
+                        "time_separator": group if group and group != prev_group else "",
+                        "shift": shift_label,
                     }
+                    if group:
+                        prev_group = group
                     timeline_entries.append(entry)
 
                 # Build location list for SVG hover highlights (chronological order)

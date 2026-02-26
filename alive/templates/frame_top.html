@@ -1,13 +1,13 @@
-<div class="drawer lg:drawer-open">
-    <input id="app-drawer" type="checkbox" class="drawer-toggle" />
+<div class="drawer drawer-open">
+    <input id="app-drawer-toggle" type="checkbox" class="drawer-toggle" />
     <div class="drawer-content {% if hand_is_player and hand_character_id %}pb-28{% endif %}">
         <div class="navbar bg-base-100 shadow mb-4">
             <div class="flex-1">
-                <label for="app-drawer" class="btn btn-ghost lg:hidden">
+                <button class="btn btn-ghost lg:hidden" onclick="var c=document.getElementById('app-drawer-toggle');c.checked=!c.checked">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
                     </svg>
-                </label>
+                </button>
                 <a href="{{frame.app_url}}" class="btn btn-ghost text-xl">{{frame.app_title}}</a>
             </div>
             <div class="flex-none flex items-center gap-2">
