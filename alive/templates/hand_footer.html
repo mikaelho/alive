@@ -1,6 +1,6 @@
 {% if hand_is_player %}
 {% if hand_card_count > 0 %}
-<footer class="fixed bottom-0 right-0 left-0 lg:left-64 z-40 {% if situation_dice %}hand-collapsed{% endif %}" id="hand-footer">
+<footer class="fixed bottom-0 right-0 left-0 lg:left-48 z-40 {% if situation_dice %}hand-collapsed{% endif %}" id="hand-footer">
     <button onclick="document.getElementById('hand-footer').classList.toggle('hand-collapsed')"
             class="absolute -top-8 right-4 btn btn-sm btn-ghost bg-base-100 shadow-[0_-2px_4px_rgba(0,0,0,0.1)] rounded-b-none border-b-0 text-xs gap-1">
         <span class="hand-label-show">Hand</span>

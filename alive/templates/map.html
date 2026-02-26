@@ -1,20 +1,23 @@
 {% include "frame_top.html" %}
-<div class="container mx-auto p-4">
-    {% if is_keeper %}
-    <div class="flex justify-end gap-2 mb-2">
+<div class="p-4">
+    {% if is_keeper and not hex_map_edit %}
+    <div class="flex flex-wrap gap-2 mb-2">
         <button class="btn btn-sm {% if hex_show_overlays %}btn-secondary{% else %}btn-ghost{% endif %}"
                 phx-click="toggle_overlays">
             {% if hex_show_overlays %}Hide Overlays{% else %}Show Overlays{% endif %}
         </button>
-        <button class="btn btn-sm {% if hex_map_edit %}btn-primary{% else %}btn-ghost{% endif %}"
+        <button class="btn btn-sm btn-ghost"
                 phx-click="toggle_map_edit">
-            {% if hex_map_edit %}Done Editing{% else %}Edit Map{% endif %}
+            Edit Map
         </button>
         <button class="btn btn-sm btn-ghost" phx-click="open_copy_map">Copy Map</button>
     </div>
     {% endif %}
 
     {% if hex_map_edit %}
+    <div class="flex justify-end mb-2">
+        <button class="btn btn-sm btn-primary" phx-click="toggle_map_edit">Done Editing</button>
+    </div>
     <div class="flex gap-4">
         <div class="w-48 shrink-0">
             <div class="flex flex-col gap-1 sticky top-4">
@@ -165,25 +168,33 @@
             <div class="text-center text-sm text-base-content/40 mt-2">Click a hex to place the party</div>
             {% endif %}
         </div>
-        <div class="md:w-56 md:shrink-0">
-            <div class="flex gap-1 mb-4">
+        <div class="flex-1 md:min-w-56">
+            <div class="flex items-center gap-1 mb-2">
+                <h3 class="text-sm text-base-content/50 uppercase font-semibold">Mission Log</h3>
                 {% if is_keeper %}
-                <button class="btn btn-sm btn-ghost flex-1 gap-1" phx-click="open_time_advance">
-                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                    Advance
-                </button>
+                <div class="tooltip tooltip-bottom" data-tip="Advance Time">
+                    <button class="btn btn-xs btn-ghost" phx-click="open_time_advance">
+                        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                    </button>
+                </div>
                 {% endif %}
-                <button class="btn btn-sm btn-ghost flex-1 gap-1" phx-click="open_map_create" phx-value-type="note">
-                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-                    Note
-                </button>
-                <button class="btn btn-sm btn-ghost flex-1 gap-1" phx-click="open_map_create" phx-value-type="situation">
-                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-                    Situation
-                </button>
+                <div class="tooltip tooltip-bottom" data-tip="Add Note">
+                    <button class="btn btn-xs btn-ghost" phx-click="open_map_create" phx-value-type="note">
+                        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                    </button>
+                </div>
+                {% if is_keeper %}
+                <div class="tooltip tooltip-bottom" data-tip="Add Situation">
+                    <button class="btn btn-xs btn-ghost" phx-click="open_map_create" phx-value-type="situation">
+                        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                    </button>
+                </div>
+                {% endif %}
             </div>
+            {% if current_game_time %}
+            <div class="text-xs text-base-content/40 mb-2">{{current_game_time}}</div>
+            {% endif %}
             {% if timeline_entries %}
-            <h3 class="text-sm text-base-content/50 uppercase font-semibold mb-2">Mission Log{% if current_game_time %} &mdash; {{current_game_time}}{% endif %}</h3>
             <ul class="timeline timeline-vertical timeline-compact" style="--timeline-color: color-mix(in oklch, var(--color-base-content) 30%, transparent);">
                 {% for entry in timeline_entries %}
                 {% if entry.time_separator %}
