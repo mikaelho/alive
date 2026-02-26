@@ -84,7 +84,7 @@ function initKeyboardShortcuts() {
                 const saveBtn = fieldEdit
                     ? fieldEdit.querySelector('button[phx-click="save_edit"], button[phx-click="save_inline_target_edit"], button[phx-click="map_save_edit"]')
                     : createForm
-                    ? createForm.querySelector('button[phx-click="save_create"], button[phx-click="map_save_create"]')
+                    ? createForm.querySelector('button[phx-click="save_create"], button[phx-click="map_save_create"], button[type="submit"]')
                     : null;
 
                 if (saveBtn) {
@@ -105,6 +105,8 @@ window.Hooks.AutoFocus = {
         this.focusInput();
     },
     updated() {
+        // Don't steal focus if user is already interacting within this form
+        if (this.el.contains(document.activeElement)) return;
         this.focusInput();
     },
     focusInput() {

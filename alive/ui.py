@@ -650,7 +650,8 @@ def render_hex_map(
         '  .hex-overlay-stroke { stroke: var(--color-primary); }',
         '  .hex-overlay-spot { fill: var(--color-base-200); }',
         '  .hex-barrier { stroke: var(--color-primary); stroke-width: 3; stroke-linecap: round; }',
-        '  .party-hex { fill: var(--color-secondary); opacity: 0.4; }',
+        '  @keyframes marker-pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.4); opacity: 0.5; } }',
+        '  .party-marker { animation: marker-pulse 2s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }',
         '  .timeline-highlight { opacity: 0; pointer-events: none; }',
         '  .timeline-highlight.active { opacity: 1; }',
         '  .hex-move { cursor: pointer; }',
@@ -712,65 +713,37 @@ def render_hex_map(
     # Draw rivers (after all hexes, as overlay)
     parts.extend(_render_rivers(rivers, hexes, cols, rows, hex_size, margin))
 
-    # Draw party trail and marker (wrapped in group for JS toggling)
-    if party_trail or party_location:
+    # Draw party location marker (ball only, wrapped in group for JS toggling)
+    if party_location:
         parts.append('<g id="party-location">')
-        if party_trail:
-            for i, loc in enumerate(party_trail):
-                try:
-                    tc, tr = map(int, loc.split(","))
-                    tcx, tcy = _hex_center(tc, tr, hex_size, margin)
-                    points = _hex_vertices(tcx, tcy, hex_size)
-                    dist = len(party_trail) - i
-                    opacity = max(0.08, 0.25 - dist * 0.06)
-                    parts.append(
-                        f'<polygon points="{points}" class="party-hex" '
-                        f'style="opacity:{opacity:.2f}"/>'
-                    )
-                except (ValueError, AttributeError):
-                    continue
-        if party_location:
-            try:
-                pc, pr = map(int, party_location.split(","))
-                pcx, pcy = _hex_center(pc, pr, hex_size, margin)
-                points = _hex_vertices(pcx, pcy, hex_size)
-                parts.append(f'<polygon points="{points}" class="party-hex"/>')
-            except (ValueError, AttributeError):
-                pass
+        try:
+            pc, pr = map(int, party_location.split(","))
+            pcx, pcy = _hex_center(pc, pr, hex_size, margin)
+            r = hex_size * 0.18
+            parts.append(
+                f'<circle cx="{pcx:.1f}" cy="{pcy:.1f}" r="{r:.1f}" '
+                f'class="party-marker" fill="var(--color-secondary)"/>'
+            )
+        except (ValueError, AttributeError):
+            pass
         parts.append('</g>')
 
     # Draw timeline highlight groups (hidden, shown on hover via JS)
     if timeline_locations:
+        r = hex_size * 0.18
         for tl_idx, (entry_id, loc) in enumerate(timeline_locations):
             if not loc:
                 continue
-            group_parts = [f'<g class="timeline-highlight" data-entry-id="{entry_id}">']
-            # Previous entries with fading trail (up to 3 back)
-            for back in range(min(3, tl_idx), 0, -1):
-                prev_loc = timeline_locations[tl_idx - back][1]
-                if not prev_loc:
-                    continue
-                try:
-                    tc, tr = map(int, prev_loc.split(","))
-                    tcx, tcy = _hex_center(tc, tr, hex_size, margin)
-                    points = _hex_vertices(tcx, tcy, hex_size)
-                    opacity = max(0.04, 0.12 - back * 0.03)
-                    group_parts.append(
-                        f'<polygon points="{points}" class="party-hex" '
-                        f'style="opacity:{opacity:.2f}"/>'
-                    )
-                except (ValueError, AttributeError):
-                    continue
-            # The focused entry itself at full highlight
             try:
                 fc, fr = map(int, loc.split(","))
                 fcx, fcy = _hex_center(fc, fr, hex_size, margin)
-                points = _hex_vertices(fcx, fcy, hex_size)
-                group_parts.append(f'<polygon points="{points}" class="party-hex"/>')
+                parts.append(
+                    f'<g class="timeline-highlight" data-entry-id="{entry_id}">'
+                    f'<circle cx="{fcx:.1f}" cy="{fcy:.1f}" r="{r:.1f}" '
+                    f'class="party-marker" fill="var(--color-secondary)"/></g>'
+                )
             except (ValueError, AttributeError):
-                pass
-            group_parts.append('</g>')
-            parts.extend(group_parts)
+                continue
 
     # Draw overlay symbols and barriers (keeper-only layer, on top of everything)
     if show_overlays:

@@ -55,6 +55,7 @@ class ModelContext:
     create_fields: list[dict] = field(default_factory=list)
     create_values: dict[str, str] = field(default_factory=dict)
     create_error: str = ""
+    create_title: str = ""
     # Picker state for adding existing items to relationships
     picker_open: bool = False
     picker_items: list[dict] = field(default_factory=list)
@@ -123,6 +124,10 @@ class ModelContext:
     situation_dice_assigned: bool = False
     situation_resolved: bool = False
     situation_all_assigned: bool = False
+    # Situation card editing (keeper)
+    situation_card_editing_id: str = ""
+    situation_card_editing_field: str = ""
+    situation_card_editing_value: str = ""
     # Keeper state
     is_keeper: bool = False
     keeper_character_id: int | None = None
@@ -163,6 +168,8 @@ class ModelContext:
     map_detail: dict = field(default_factory=dict)
     map_detail_editing: str = ""
     map_detail_draft: str = ""
+    # Map situation overlay (full situation mode on map page)
+    map_situation_active: bool = False
 
 
 def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive") -> Type[LiveView]:
@@ -475,6 +482,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
             # Handle creation events
             if event == "start_create":
                 socket.context.creating = True
+                socket.context.create_title = model_display_name_singular
                 # Build create fields, loading FK choices dynamically
                 fields_with_choices = []
                 for i, f in enumerate(create_fields):
@@ -494,6 +502,9 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 socket.context.creating = False
                 socket.context.create_values = {}
                 socket.context.create_error = ""
+                if socket.context.keeper_creating:
+                    socket.context.keeper_creating = False
+                    socket.context.keeper_adding = False
                 return
 
             if event == "update_create_field":
@@ -510,6 +521,54 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 return
 
             if event == "save_create":
+                if socket.context.keeper_creating:
+                    # Keeper card creation: validate against Card fields, create Card + CharacterCard + add to situation
+                    missing = []
+                    for f in socket.context.create_fields:
+                        if f["required"] and not socket.context.create_values.get(f["name"]):
+                            missing.append(f["label"])
+                    if missing:
+                        socket.context.create_error = f"Required: {', '.join(missing)}"
+                        return
+
+                    from django.apps import apps as _apps_ksc
+                    Card = _apps_ksc.get_model('cards', 'Card')
+                    card_store = get_store(Card)
+                    card = await card_store.create_item(socket.context.create_values)
+                    if not card:
+                        socket.context.create_error = "Failed to create card"
+                        return
+
+                    situation_id = socket.context.hand_active_situation_id
+                    keeper_char_id = socket.context.keeper_character_id
+                    if situation_id and keeper_char_id:
+                        from asgiref.sync import sync_to_async as _sta_ksc
+
+                        @_sta_ksc(thread_sensitive=False)
+                        def _link_card():
+                            CharacterCard = _apps_ksc.get_model('cards', 'CharacterCard')
+                            Situation = _apps_ksc.get_model('cards', 'Situation')
+                            sit = Situation.objects.get(pk=situation_id)
+                            if sit.dice:
+                                return
+                            cc = CharacterCard.objects.create(
+                                character_id=keeper_char_id,
+                                card=card,
+                                level=4,
+                            )
+                            sit.cards.add(cc)
+
+                        await _link_card()
+
+                    socket.context.creating = False
+                    socket.context.keeper_creating = False
+                    socket.context.keeper_adding = False
+                    socket.context.create_values = {}
+                    socket.context.create_error = ""
+                    await self._refresh_view_async(socket)
+                    await self._broadcast_change(socket)
+                    return
+
                 # Validate required fields
                 missing = []
                 for f in create_fields:
@@ -1322,6 +1381,83 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     await self._broadcast_change(socket)
                 return
 
+            if event == "adjust_situation_card_level":
+                card_id = payload.get("card_id", "")
+                delta = int(payload.get("delta", 0))
+                if card_id and delta and socket.context.is_keeper:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+                    has_dice = bool(socket.context.situation_dice)
+
+                    @_sta(thread_sensitive=False)
+                    def _adjust():
+                        if has_dice:
+                            SituationCard = apps.get_model('cards', 'SituationCard')
+                            sc = SituationCard.objects.get(pk=int(card_id))
+                            sc.level = max(1, min(10, sc.level + delta))
+                            sc.save(update_fields=["level"])
+                        else:
+                            CharacterCard = apps.get_model('cards', 'CharacterCard')
+                            cc = CharacterCard.objects.get(pk=int(card_id))
+                            cc.level = max(1, min(10, cc.level + delta))
+                            cc.save(update_fields=["level"])
+
+                    await _adjust()
+                    await self._refresh_view_async(socket)
+                    await self._broadcast_change(socket)
+                return
+
+            if event == "start_situation_card_edit":
+                card_id = payload.get("card_id", "")
+                field = payload.get("field", "")
+                if card_id and field in ("name", "notes") and socket.context.is_keeper:
+                    socket.context.situation_card_editing_id = card_id
+                    socket.context.situation_card_editing_field = field
+                return
+
+            if event == "cancel_situation_card_edit":
+                socket.context.situation_card_editing_id = ""
+                socket.context.situation_card_editing_field = ""
+                socket.context.situation_card_editing_value = ""
+                return
+
+            if event == "save_situation_card_edit":
+                card_id = payload.get("card_id", "")
+                field = payload.get("field", "")
+                value = payload.get("value", "")
+                if isinstance(value, list):
+                    value = value[0] if value else ""
+                if card_id and field in ("name", "notes") and socket.context.is_keeper:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps
+                    has_dice = bool(socket.context.situation_dice)
+                    value = value.strip()
+
+                    @_sta(thread_sensitive=False)
+                    def _save():
+                        if has_dice:
+                            SituationCard = apps.get_model('cards', 'SituationCard')
+                            sc = SituationCard.objects.get(pk=int(card_id))
+                            setattr(sc, field, value)
+                            sc.save(update_fields=[field])
+                        else:
+                            CharacterCard = apps.get_model('cards', 'CharacterCard')
+                            cc = CharacterCard.objects.select_related('card').get(pk=int(card_id))
+                            setattr(cc.card, field, value)
+                            cc.card.save(update_fields=[field])
+
+                    await _save()
+                    socket.context.situation_card_editing_id = ""
+                    socket.context.situation_card_editing_field = ""
+                    socket.context.situation_card_editing_value = ""
+                    await self._refresh_view_async(socket)
+                    await self._broadcast_change(socket)
+                else:
+                    socket.context.situation_card_editing_id = ""
+                    socket.context.situation_card_editing_field = ""
+                    socket.context.situation_card_editing_value = ""
+                return
+
             if event == "rename_situation":
                 new_name = payload.get("value", "").strip()
                 situation_id = socket.context.hand_active_situation_id
@@ -1346,10 +1482,25 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
 
             if event == "keeper_cancel_add":
                 socket.context.keeper_adding = False
-                socket.context.keeper_creating = False
+                if socket.context.keeper_creating:
+                    socket.context.keeper_creating = False
+                    socket.context.creating = False
+                    socket.context.create_values = {}
+                    socket.context.create_error = ""
                 return
 
             if event == "keeper_start_create":
+                from django.apps import apps as _apps_kc
+                Card = _apps_kc.get_model('cards', 'Card')
+                card_create_fields = Card.get_creatable_fields()
+                fields_with_choices = []
+                for i, f in enumerate(card_create_fields):
+                    fields_with_choices.append({**f, "value": "", "autofocus": i == 0})
+                socket.context.create_fields = fields_with_choices
+                socket.context.create_values = {}
+                socket.context.create_error = ""
+                socket.context.create_title = Card._meta.verbose_name.title()
+                socket.context.creating = True
                 socket.context.keeper_creating = True
                 return
 
@@ -1370,38 +1521,6 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
 
                     await _add()
                     socket.context.keeper_adding = False
-                    await self._refresh_view_async(socket)
-                    await self._broadcast_change(socket)
-                return
-
-            if event == "keeper_create_card":
-                card_name = payload.get("name", "").strip()
-                card_level = payload.get("level", "4")
-                situation_id = socket.context.hand_active_situation_id
-                keeper_char_id = socket.context.keeper_character_id
-                if card_name and situation_id and keeper_char_id and socket.context.is_keeper:
-                    from asgiref.sync import sync_to_async as _sta
-                    from django.apps import apps
-
-                    @_sta(thread_sensitive=False)
-                    def _create():
-                        Card = apps.get_model('cards', 'Card')
-                        CharacterCard = apps.get_model('cards', 'CharacterCard')
-                        Situation = apps.get_model('cards', 'Situation')
-                        sit = Situation.objects.get(pk=situation_id)
-                        if sit.dice:
-                            return
-                        card = Card.objects.create(name=card_name)
-                        cc = CharacterCard.objects.create(
-                            character_id=keeper_char_id,
-                            card=card,
-                            level=int(card_level) if card_level else 4,
-                        )
-                        sit.cards.add(cc)
-
-                    await _create()
-                    socket.context.keeper_adding = False
-                    socket.context.keeper_creating = False
                     await self._refresh_view_async(socket)
                     await self._broadcast_change(socket)
                 return
@@ -1625,6 +1744,37 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 socket.context.map_create_error = ""
                 await self._load_map_data(socket)
                 await self._broadcast_change(socket)
+                return
+
+            if event == "cancel_map_situation":
+                situation_id = socket.context.hand_active_situation_id
+                if situation_id and socket.context.is_keeper and not socket.context.situation_dice:
+                    from asgiref.sync import sync_to_async as _sta
+                    from django.apps import apps as _apps_cs
+
+                    @_sta(thread_sensitive=False)
+                    def _cancel():
+                        Situation = _apps_cs.get_model('cards', 'Situation')
+                        sit = Situation.objects.get(pk=situation_id)
+                        if sit.dice:
+                            return  # Don't cancel after roll
+                        sit.delete()
+
+                    await _cancel()
+                    socket.context.hand_active_situation_id = None
+                    socket.context.active_situation_name = ""
+                    socket.context.active_situation_notes = ""
+                    socket.context.situation_cards = []
+                    socket.context.situation_dice = []
+                    socket.context.situation_assignments = {}
+                    socket.context.situation_dice_assigned = False
+                    socket.context.situation_resolved = False
+                    socket.context.situation_all_assigned = False
+                    socket.context.map_situation_active = False
+                    await self._load_map_data(socket)
+                    if socket.context.hand_is_player:
+                        await self._load_hand_data(socket)
+                    await self._broadcast_change(socket)
                 return
 
             # --- Map detail popup ---
@@ -2033,6 +2183,26 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     await self._broadcast_change(socket)
                 return
 
+            if event == "resolve_situation":
+                situation_id = socket.context.hand_active_situation_id
+                if not situation_id:
+                    return
+                from asgiref.sync import sync_to_async as _sta
+                from django.apps import apps
+
+                @_sta(thread_sensitive=False)
+                def _resolve():
+                    Situation = apps.get_model('cards', 'Situation')
+                    sit = Situation.objects.filter(pk=situation_id, resolved=False).first()
+                    if sit:
+                        sit.resolved = True
+                        sit.save(update_fields=["resolved"])
+
+                await _resolve()
+                await self._refresh_view_async(socket)
+                await self._broadcast_change(socket)
+                return
+
             # Quick dice rolls (sidebar)
             if event == "quick_roll_d6":
                 import random
@@ -2118,7 +2288,9 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
 
         async def _load_situation_data(self, socket: LiveViewSocket[ModelContext]):
             """Load situation-specific context when viewing the Situation model."""
-            if conf.template != "situation.html":
+            is_situation_page = conf.template == "situation.html"
+            is_map_page = conf.template == "map.html"
+            if not is_situation_page and not is_map_page:
                 return
 
             game_id = socket.context.frame.get("game_id")
@@ -2132,14 +2304,23 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
             def _fetch():
                 Situation = apps.get_model('cards', 'Situation')
 
-                situations = list(
-                    Situation.objects.filter(game_id=game_id).order_by('-pk')
-                )
-                if not situations:
-                    return None, [], [], [], {}, False, False
-
-                active = situations[0]
-                past = [{"id": str(s.pk), "name": s.name} for s in situations[1:]]
+                if is_map_page:
+                    # Map page: only show unresolved situations (not notes)
+                    active = Situation.objects.filter(
+                        game_id=game_id, resolved=False, situation_type="situation"
+                    ).order_by('-pk').first()
+                    past = []
+                    if not active:
+                        return None, [], [], [], {}, False, False
+                else:
+                    # Situation page: show most recent regardless of status
+                    situations = list(
+                        Situation.objects.filter(game_id=game_id).order_by('-pk')
+                    )
+                    if not situations:
+                        return None, [], [], [], {}, False, False
+                    active = situations[0]
+                    past = [{"id": str(s.pk), "name": s.name} for s in situations[1:]]
                 dice = active.dice or []
                 assignments = active.assignments or {}
 
@@ -2178,6 +2359,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                             "bands": card_bands,
                             "assigned_die_value": assigned_die_value,
                             "assigned_die_index": assigned_die_index,
+                            "assigned_band": assigned_band_label or "",
                             "available_dice": available_dice,
                             "used": sc.used,
                         })
@@ -2211,6 +2393,8 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 socket.context.situation_dice_assigned = False
                 socket.context.situation_resolved = False
                 socket.context.situation_all_assigned = False
+                if is_map_page:
+                    socket.context.map_situation_active = False
                 return
 
             # Build enriched dice list for display with SVGs
@@ -2235,6 +2419,15 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 for die in card.get("available_dice", []):
                     die["svg"] = render_die_svg(die["value"], css_class="h-8 w-8")
 
+            # Annotate cards with editing state for keeper
+            edit_id = socket.context.situation_card_editing_id
+            edit_field = socket.context.situation_card_editing_field
+            edit_value = socket.context.situation_card_editing_value
+            for card in cards:
+                card["editing_name"] = (card["id"] == edit_id and edit_field == "name")
+                card["editing_notes"] = (card["id"] == edit_id and edit_field == "notes")
+                card["editing_value"] = edit_value if card["id"] == edit_id else ""
+
             socket.context.hand_active_situation_id = active.pk
             socket.context.active_situation_name = active.name
             socket.context.active_situation_notes = active.notes or ""
@@ -2245,6 +2438,9 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
             socket.context.situation_dice_assigned = dice_assigned
             socket.context.situation_resolved = resolved
             socket.context.situation_all_assigned = bool(dice and cards and len(assignments) >= len(cards))
+
+            if is_map_page:
+                socket.context.map_situation_active = not resolved
 
             # Load keeper's available cards for the picker
             if socket.context.is_keeper and socket.context.keeper_character_id and not dice:
@@ -2318,7 +2514,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 Situation = _apps_rd.get_model('cards', 'Situation')
                 try:
                     s = Situation.objects.get(pk=detail_id)
-                    return {
+                    data = {
                         "id": str(s.pk),
                         "name": s.name,
                         "notes": s.notes,
@@ -2326,6 +2522,25 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                         "type_label": s.get_situation_type_display(),
                         "location": s.location,
                     }
+                    # Include condensed cards for resolved situations
+                    if s.resolved and s.dice:
+                        from cards.models.card import get_band_for_die
+                        assignments = s.assignments or {}
+                        dice = s.dice
+                        detail_cards = []
+                        for sc in s.situation_cards.all():
+                            card_id = str(sc.pk)
+                            assigned_die_index = assignments.get(card_id)
+                            band = ""
+                            if assigned_die_index is not None and assigned_die_index < len(dice):
+                                band = get_band_for_die(sc.level, dice[assigned_die_index]) or ""
+                            detail_cards.append({
+                                "name": sc.name,
+                                "notes": sc.notes,
+                                "band": band,
+                            })
+                        data["cards"] = detail_cards
+                    return data
                 except Situation.DoesNotExist:
                     return None
 

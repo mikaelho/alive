@@ -108,6 +108,55 @@
         </div>
     </div>
     {% else %}
+
+    {% if map_situation_active %}
+    <style>
+        .die-face { fill: var(--color-base-content); }
+        .die-pip { fill: var(--color-base-100); }
+        .die-primary .die-face { fill: var(--color-primary); }
+        .die-primary .die-pip { fill: var(--color-primary-content); }
+        .die-faded { opacity: 0.3; }
+    </style>
+    <div class="card bg-base-100 shadow-lg border-2 border-primary mb-4">
+        <div class="card-body">
+            <div class="flex justify-between items-center mb-2">
+                <h2 class="text-xl font-bold">{{active_situation_name}}</h2>
+                <div class="flex gap-2">
+                    {% if is_keeper and not situation_dice %}
+                    <button class="btn btn-ghost btn-sm" phx-click="cancel_map_situation">Cancel</button>
+                    {% endif %}
+                    {% if situation_cards and not situation_dice %}
+                    <button class="btn btn-primary" phx-click="roll_situation">Roll</button>
+                    {% endif %}
+                    {% if situation_dice and situation_all_assigned and not situation_dice_assigned %}
+                    <button class="btn btn-primary" phx-click="lock_dice">Done</button>
+                    {% endif %}
+                    {% if situation_dice_assigned %}
+                    <button class="btn btn-primary" phx-click="resolve_situation">Resolve</button>
+                    {% endif %}
+                </div>
+            </div>
+            {% if active_situation_notes %}
+            <p class="text-base-content/70 mb-4">{{active_situation_notes}}</p>
+            {% endif %}
+
+            {% if situation_dice and not situation_dice_assigned %}
+            <div class="flex gap-2 items-center mt-4">
+                {% for die in situation_dice %}
+                {% if die.assigned %}
+                <span class="die-primary die-faded cursor-pointer" phx-click="unassign_die" phx-value-card_id="{{die.card_id}}">{{die.svg}}</span>
+                {% else %}
+                <span class="die-primary">{{die.svg}}</span>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% include "situation_cards.html" %}
+        </div>
+    </div>
+    {% endif %}
+
     <div class="flex flex-col md:flex-row gap-4">
         <div class="flex-1 min-w-0" id="hex-map-container" phx-hook="HexMap">
             {{hex_map_svg}}
@@ -233,6 +282,21 @@
                         {% endif %}
                     </div>
                     {% endif %}
+
+                    {% if map_detail.cards %}
+                    <div class="mt-3">
+                        <span class="text-xs text-base-content/50 uppercase font-semibold">Cards</span>
+                        <table class="text-sm mt-1 w-full">
+                            {% for card in map_detail.cards %}
+                            <tr>
+                                <td class="font-semibold pr-2 py-0.5 align-top whitespace-nowrap">{{card.name}}</td>
+                                <td class="text-primary font-semibold pr-2 py-0.5 align-top whitespace-nowrap">{{card.band}}</td>
+                                <td class="text-base-content/70 py-0.5 align-top">{{card.notes}}</td>
+                            </tr>
+                            {% endfor %}
+                        </table>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -240,5 +304,5 @@
     {% endif %}
 
     {% endif %}
-</div>
+
 {% include "frame_bottom.html" %}

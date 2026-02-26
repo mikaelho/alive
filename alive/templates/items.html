@@ -51,45 +51,7 @@
         {% endif %}
     </div>
 
-    {% if creating %}
-    <div class="card bg-base-100 shadow-sm border-2 border-primary mb-4">
-        <div class="card-body create-form" id="create-form" phx-hook="AutoFocus">
-            <h2 class="card-title">New {{model_name_singular}}</h2>
-            {% if create_error %}
-            <div class="alert alert-error">{{create_error}}</div>
-            {% endif %}
-            <form phx-change="update_create_field" phx-submit="save_create">
-            {% for field in create_fields %}
-            <fieldset class="fieldset w-full">
-                <legend class="fieldset-legend">{{field.label}}{% if field.required %} *{% endif %}</legend>
-                {% if field.field_type == 'textarea' %}
-                <textarea class="textarea w-full" name="{{field.name}}" phx-value-field="{{field.name}}" rows="3" autocomplete="off">{{field.value}}</textarea>
-                {% elif field.field_type == 'select' %}
-                <select class="select w-full" name="{{field.name}}" phx-value-field="{{field.name}}">
-                    <option value="">-- Select --</option>
-                    {% for choice in field.choices %}
-                    <option value="{{choice.0}}">{{choice.1}}</option>
-                    {% endfor %}
-                </select>
-                {% elif field.field_type == 'checkbox' %}
-                <input type="checkbox" class="checkbox" name="{{field.name}}" phx-value-field="{{field.name}}" {% if field.value %}checked{% endif %} />
-                {% elif field.field_type == 'date' %}
-                <input type="date" class="input w-full" name="{{field.name}}" value="{{field.value}}" phx-value-field="{{field.name}}" />
-                {% elif field.field_type == 'number' %}
-                <input type="number" class="input w-full" name="{{field.name}}" value="{{field.value}}" phx-value-field="{{field.name}}" autocomplete="off" />
-                {% else %}
-                <input type="text" class="input w-full" name="{{field.name}}" value="{{field.value}}" phx-value-field="{{field.name}}" autocomplete="off" />
-                {% endif %}
-            </fieldset>
-            {% endfor %}
-            <div class="card-actions justify-end mt-4">
-                <button type="button" class="btn btn-ghost" phx-click="cancel_create">Cancel</button>
-                <button type="submit" class="btn btn-primary">Create</button>
-            </div>
-            </form>
-        </div>
-    </div>
-    {% endif %}
+    {% include "create_form.html" %}
 
     <div class="space-y-4" id="cards-list" phx-hook="Sortable">
         {% for item in items %}
