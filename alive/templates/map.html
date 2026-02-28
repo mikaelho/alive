@@ -57,7 +57,7 @@
         </div>
         <div class="flex-1 min-w-0 relative" id="hex-map-container" phx-hook="HexMap">
             {{hex_map_svg}}
-            {% if hex_notes_mode and hex_selected_hex %}
+            {% if hex_selected_hex %}
             <div class="absolute inset-0 flex items-center justify-center pointer-events-none" style="z-index: 10;">
                 <div class="card bg-base-100 shadow-xl border border-base-300 w-80 max-h-96 overflow-auto pointer-events-auto">
                     <div class="card-body p-4">
@@ -70,7 +70,7 @@
                             </button>
                         </div>
                         {% if hex_note_editing %}
-                        <form phx-submit="save_hex_note">
+                        <form phx-submit="save_hex_note" phx-hook="AutoFocus" id="hex-note-form">
                             <textarea class="textarea textarea-bordered w-full" name="note" rows="8" placeholder="Notes for this hex...">{{hex_selected_note}}</textarea>
                             <div class="flex gap-2 mt-2">
                                 <button type="submit" class="btn btn-sm btn-primary flex-1">Save</button>
@@ -97,17 +97,7 @@
 
                 <div class="divider my-1"></div>
                 <h3 class="font-bold text-sm mb-1">Notes</h3>
-                <button class="btn btn-sm {% if hex_notes_mode %}btn-primary{% else %}btn-ghost{% endif %} w-full justify-start gap-2"
-                        phx-click="toggle_notes_mode">
-                    <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                    </svg>
-                    {% if hex_notes_mode %}Done{% else %}Edit Notes{% endif %}
-                </button>
-                {% if hex_notes_mode %}
-                <div class="text-xs opacity-60 mt-1">Click a hex to view/edit its note</div>
-                {% endif %}
+                <div class="text-xs opacity-60">Click any hex on the map to view/edit its note</div>
             </div>
         </div>
     </div>
@@ -162,10 +152,62 @@
     {% endif %}
 
     <div class="flex flex-col md:flex-row gap-4">
-        <div class="flex-1 min-w-0" id="hex-map-container" phx-hook="HexMap">
+        <div class="flex-1 min-w-0 relative" id="hex-map-container" phx-hook="HexMap">
             {{hex_map_svg}}
             {% if is_keeper and not party_location %}
             <div class="text-center text-sm text-base-content/40 mt-2">Click a hex to place the party</div>
+            {% endif %}
+            {% if hex_action_hex %}
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none" style="z-index: 10;">
+                <div class="card bg-base-100 shadow-xl border border-base-300 w-56 pointer-events-auto">
+                    <div class="card-body p-3">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-xs opacity-60">Hex {{hex_action_hex}}</span>
+                            <button class="btn btn-ghost btn-xs" phx-click="close_hex_action">
+                                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M18 6L6 18M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="flex flex-col gap-1">
+                            <button class="btn btn-sm btn-primary w-full" phx-click="hex_action_move">Move here</button>
+                            <button class="btn btn-sm btn-ghost w-full" phx-click="hex_action_note">View note</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            {% if hex_selected_hex %}
+            <div class="absolute inset-0 flex items-center justify-center pointer-events-none" style="z-index: 10;">
+                <div class="card bg-base-100 shadow-xl border border-base-300 w-80 max-h-96 overflow-auto pointer-events-auto">
+                    <div class="card-body p-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-xs opacity-60">Hex {{hex_selected_hex}}</span>
+                            <button class="btn btn-ghost btn-xs" phx-click="close_hex_note">
+                                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M18 6L6 18M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+                        {% if hex_note_editing %}
+                        <form phx-submit="save_hex_note" phx-hook="AutoFocus" id="hex-note-form">
+                            <textarea class="textarea textarea-bordered w-full" name="note" rows="8" placeholder="Notes for this hex...">{{hex_selected_note}}</textarea>
+                            <div class="flex gap-2 mt-2">
+                                <button type="submit" class="btn btn-sm btn-primary flex-1">Save</button>
+                            </div>
+                        </form>
+                        {% else %}
+                            {% if hex_note_html %}
+                            <div class="prose prose-sm max-w-none cursor-pointer" phx-click="edit_hex_note">
+                                {{hex_note_html}}
+                            </div>
+                            {% else %}
+                            <div class="text-sm opacity-40 italic cursor-pointer" phx-click="edit_hex_note">Click to add a note...</div>
+                            {% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
             {% endif %}
         </div>
         <div class="flex-1 md:min-w-56">

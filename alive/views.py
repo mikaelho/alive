@@ -23,6 +23,21 @@ GRID_TEMPLATE_PATH = str(TEMPLATE_DIR / "grid.html")
 INDEX_TEMPLATE_PATH = str(TEMPLATE_DIR / "index.html")
 
 
+def _snippet(text: str, query: str, ctx: int = 40) -> str:
+    """Extract a short substring around the first match of query in text."""
+    idx = text.lower().find(query.lower())
+    if idx == -1:
+        return text[:ctx * 2] if len(text) > ctx * 2 else text
+    start = max(0, idx - ctx)
+    end = min(len(text), idx + len(query) + ctx)
+    snippet = text[start:end].replace("\n", " ")
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet = snippet + "..."
+    return snippet
+
+
 @dataclass
 class IndexContext:
     """Context for the index page."""
@@ -148,6 +163,8 @@ class ModelContext:
     hex_current_river: list[str] = field(default_factory=list)
     hex_notes_mode: bool = False
     hex_selected_hex: str = ""
+    hex_action_hex: str = ""
+    hex_action_is_adjacent: bool = False
     hex_selected_note: str = ""
     hex_note_html: str = ""
     hex_note_editing: bool = False
@@ -184,6 +201,10 @@ class ModelContext:
     time_advance_shift: str = ""
     # Current game time display
     current_game_time: str = ""
+    # Search modal state
+    search_open: bool = False
+    search_query: str = ""
+    search_results: list[dict] = field(default_factory=list)
 
 
 def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive") -> Type[LiveView]:
@@ -1552,6 +1573,10 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     socket.context.hex_overlay_mode = False
                     socket.context.hex_river_drawing = False
                     socket.context.hex_current_river = []
+                    socket.context.hex_action_hex = ""
+                    socket.context.hex_action_is_adjacent = False
+                    socket.context.hex_selected_hex = ""
+                    socket.context.hex_note_editing = False
                     await self._load_map_data(socket)
                 return
 
@@ -1635,9 +1660,11 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     hex_map.save(update_fields=["notes"])
 
                 await _save_note()
-                socket.context.hex_selected_note = note_text
-                socket.context.hex_note_html = render_markdown_safe(note_text) if note_text.strip() else ""
+                socket.context.hex_selected_hex = ""
+                socket.context.hex_selected_note = ""
+                socket.context.hex_note_html = ""
                 socket.context.hex_note_editing = False
+                socket.context.hex_notes_mode = False
                 await self._load_map_data(socket)
                 return
 
@@ -1655,7 +1682,102 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     await self._load_map_data(socket)
                 return
 
-            if event == "move_party":
+            if event == "hex_click":
+                if not socket.context.is_keeper or socket.context.hex_map_edit:
+                    return
+                col = payload.get("col", "")
+                row = payload.get("row", "")
+                if col == "" or row == "":
+                    return
+                target_key = f"{col},{row}"
+                current = socket.context.party_location
+
+                # Determine if adjacent
+                is_adjacent = False
+                if current:
+                    from alive.ui import get_adjacent_hexes
+                    cc, cr = map(int, current.split(","))
+                    adjacent = get_adjacent_hexes(cc, cr)
+                    is_adjacent = target_key in adjacent
+                else:
+                    # No party placed yet — treat all hexes as adjacent (placement)
+                    is_adjacent = True
+
+                if is_adjacent:
+                    # Show action popup: move or view note
+                    socket.context.hex_action_hex = target_key
+                    socket.context.hex_action_is_adjacent = True
+                    socket.context.hex_selected_hex = ""
+                    socket.context.hex_note_editing = False
+                    await self._load_map_data(socket)
+                else:
+                    # Open note directly
+                    socket.context.hex_action_hex = ""
+                    socket.context.hex_action_is_adjacent = False
+                    map_id = socket.context.hex_map_id
+                    if map_id:
+                        from asgiref.sync import sync_to_async as _sta_n
+
+                        @_sta_n(thread_sensitive=False)
+                        def _load_note():
+                            hex_map = model.objects.get(pk=map_id)
+                            notes = hex_map.notes or {}
+                            return notes.get(target_key, "")
+
+                        note = await _load_note()
+                        socket.context.hex_selected_hex = target_key
+                        socket.context.hex_selected_note = note
+                        socket.context.hex_note_html = render_markdown_safe(note) if note.strip() else ""
+                        socket.context.hex_note_editing = False
+                        await self._load_map_data(socket)
+                return
+
+            if event == "hex_action_move":
+                if not socket.context.is_keeper:
+                    return
+                target_key = socket.context.hex_action_hex
+                if not target_key:
+                    return
+                socket.context.hex_action_hex = ""
+                socket.context.hex_action_is_adjacent = False
+                # Reuse move_party logic
+                col, row = target_key.split(",")
+                payload = {"col": col, "row": row}
+                # Fall through to move_party below
+
+            if event == "hex_action_note":
+                if not socket.context.is_keeper:
+                    return
+                target_key = socket.context.hex_action_hex
+                if not target_key:
+                    return
+                socket.context.hex_action_hex = ""
+                socket.context.hex_action_is_adjacent = False
+                map_id = socket.context.hex_map_id
+                if map_id:
+                    from asgiref.sync import sync_to_async as _sta_n2
+
+                    @_sta_n2(thread_sensitive=False)
+                    def _load_note():
+                        hex_map = model.objects.get(pk=map_id)
+                        notes = hex_map.notes or {}
+                        return notes.get(target_key, "")
+
+                    note = await _load_note()
+                    socket.context.hex_selected_hex = target_key
+                    socket.context.hex_selected_note = note
+                    socket.context.hex_note_html = render_markdown_safe(note) if note.strip() else ""
+                    socket.context.hex_note_editing = False
+                    await self._load_map_data(socket)
+                return
+
+            if event == "close_hex_action":
+                socket.context.hex_action_hex = ""
+                socket.context.hex_action_is_adjacent = False
+                await self._load_map_data(socket)
+                return
+
+            if event == "move_party" or event == "hex_action_move":
                 if not socket.context.is_keeper or socket.context.hex_map_edit:
                     return
                 col = payload.get("col", "")
@@ -2168,7 +2290,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     socket.context.hex_selected_hex = key
                     socket.context.hex_selected_note = note
                     socket.context.hex_note_html = render_markdown_safe(note) if note.strip() else ""
-                    socket.context.hex_note_editing = not note.strip()
+                    socket.context.hex_note_editing = False
                     await self._load_map_data(socket)
                     return
 
@@ -2269,6 +2391,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                         Situation = apps.get_model('cards', 'Situation')
                         Hand = apps.get_model('cards', 'Hand')
                         SituationCard = apps.get_model('cards', 'SituationCard')
+                        Game = apps.get_model('cards', 'Game')
                         sit = Situation.objects.get(pk=situation_id)
                         if sit.dice:
                             return  # Already rolled
@@ -2278,7 +2401,13 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                         n = len(originals)
                         if n == 0:
                             return
-                        sit.dice = [random.randint(1, 6) for _ in range(n + 1)]
+                        # Check for a spare die carried over from the previous situation
+                        game = Game.objects.get(pk=sit.game_id)
+                        dice = [random.randint(1, 6) for _ in range(n + 1)]
+                        if game.spare_die is not None:
+                            dice = [game.spare_die] + dice
+                            Game.objects.filter(pk=game.pk).update(spare_die=None)
+                        sit.dice = dice
                         sit.save(update_fields=["dice"])
                         # Create archived snapshot cards on the situation
                         for cc in originals:
@@ -2363,6 +2492,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     @_sta(thread_sensitive=False)
                     def _lock():
                         Situation = apps.get_model('cards', 'Situation')
+                        Game = apps.get_model('cards', 'Game')
                         sit = Situation.objects.get(pk=situation_id)
                         if not sit.dice or sit.dice_assigned:
                             return
@@ -2371,6 +2501,10 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                             return
                         sit.dice_assigned = True
                         sit.save(update_fields=["dice_assigned"])
+                        # Store the unassigned leftover die as spare for next situation
+                        assigned_indices = set(sit.assignments.values())
+                        spare_idx = next(i for i in range(len(sit.dice)) if i not in assigned_indices)
+                        Game.objects.filter(pk=sit.game_id).update(spare_die=sit.dice[spare_idx])
 
                     await _lock()
                     await self._refresh_view_async(socket)
@@ -2414,6 +2548,166 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 await _resolve()
                 await self._refresh_view_async(socket)
                 await self._broadcast_change(socket)
+                return
+
+            # Search modal
+            if event == "open_search":
+                if not socket.context.is_keeper:
+                    return
+                socket.context.search_open = True
+                socket.context.search_query = ""
+                socket.context.search_results = []
+                return
+
+            if event == "close_search":
+                socket.context.search_open = False
+                socket.context.search_query = ""
+                socket.context.search_results = []
+                return
+
+            if event == "search_update":
+                query = (payload.get("value") or "").strip()
+                socket.context.search_query = query
+                if len(query) < 2:
+                    socket.context.search_results = []
+                    return
+                game_id = socket.context.frame.get("game_id")
+                if not game_id:
+                    return
+                from asgiref.sync import sync_to_async as _sta_search
+
+                @_sta_search(thread_sensitive=False)
+                def _run_search():
+                    from django.apps import apps as _apps_s
+                    HexMap = _apps_s.get_model('cards', 'HexMap')
+                    Situation = _apps_s.get_model('cards', 'Situation')
+                    Card = _apps_s.get_model('cards', 'Card')
+                    q = query.lower()
+                    results = []
+                    # 1. Hex map notes
+                    first_note = True
+                    hm = HexMap.objects.filter(game_id=game_id).first()
+                    if hm and hm.notes:
+                        for key, note in hm.notes.items():
+                            if note and q in note.lower():
+                                if first_note:
+                                    results.append({"group_label": "Map Notes", "type": "", "id": "", "badge": "", "label": "", "snippet": ""})
+                                    first_note = False
+                                results.append({
+                                    "group_label": "",
+                                    "type": "hex_note",
+                                    "id": key,
+                                    "badge": "Map",
+                                    "label": f"Hex {key}",
+                                    "snippet": _snippet(note, query),
+                                })
+                    # 2. Situations
+                    first_sit = True
+                    for sit in Situation.objects.filter(game_id=game_id):
+                        text = f"{sit.name} {sit.notes or ''}"
+                        if q in text.lower():
+                            if first_sit:
+                                results.append({"group_label": "Situations", "type": "", "id": "", "badge": "", "label": "", "snippet": ""})
+                                first_sit = False
+                            snippet = ""
+                            if sit.notes and q in sit.notes.lower():
+                                snippet = _snippet(sit.notes, query)
+                            results.append({
+                                "group_label": "",
+                                "type": "situation",
+                                "id": str(sit.pk),
+                                "badge": "Situation",
+                                "label": sit.name,
+                                "snippet": snippet,
+                            })
+                    # 3. Characters
+                    first_char = True
+                    Character = _apps_s.get_model('cards', 'Character')
+                    for char in Character.objects.filter(game_id=game_id):
+                        text = f"{char.name} {char.notes or ''}"
+                        if q in text.lower():
+                            if first_char:
+                                results.append({"group_label": "Characters", "type": "", "id": "", "badge": "", "label": "", "snippet": ""})
+                                first_char = False
+                            snippet = ""
+                            if char.notes and q in char.notes.lower():
+                                snippet = _snippet(char.notes, query)
+                            results.append({
+                                "group_label": "",
+                                "type": "character",
+                                "id": str(char.pk),
+                                "badge": "Character",
+                                "label": char.name,
+                                "snippet": snippet,
+                            })
+                    # 4. Cards (via characters in this game)
+                    first_card = True
+                    seen_cards = set()
+                    from cards.models.character_card import CharacterCard
+                    for cc in (CharacterCard.objects
+                               .filter(character__game_id=game_id)
+                               .select_related('card', 'character')):
+                        card = cc.card
+                        if card.pk in seen_cards:
+                            continue
+                        text = f"{card.name} {card.notes or ''}"
+                        if q in text.lower():
+                            seen_cards.add(card.pk)
+                            if first_card:
+                                results.append({"group_label": "Cards", "type": "", "id": "", "badge": "", "label": "", "snippet": ""})
+                                first_card = False
+                            snippet = ""
+                            if card.notes and q in card.notes.lower():
+                                snippet = _snippet(card.notes, query)
+                            results.append({
+                                "group_label": "",
+                                "type": "card",
+                                "id": str(cc.character_id),
+                                "badge": "Card",
+                                "label": f"{card.name} ({cc.character.name})",
+                                "snippet": snippet,
+                            })
+                    return results
+
+                socket.context.search_results = await _run_search()
+                return
+
+            if event == "search_select":
+                result_type = payload.get("type", "")
+                result_id = payload.get("id", "")
+                if not result_type or not result_id:
+                    return
+                # Close search
+                socket.context.search_open = False
+                socket.context.search_query = ""
+                socket.context.search_results = []
+                if result_type == "hex_note":
+                    # Open hex note popup
+                    target_key = result_id
+                    map_id = socket.context.hex_map_id
+                    if map_id:
+                        from asgiref.sync import sync_to_async as _sta_sn
+
+                        @_sta_sn(thread_sensitive=False)
+                        def _load_note():
+                            hex_map = model.objects.get(pk=map_id)
+                            notes = hex_map.notes or {}
+                            return notes.get(target_key, "")
+
+                        note = await _load_note()
+                        socket.context.hex_selected_hex = target_key
+                        socket.context.hex_selected_note = note
+                        socket.context.hex_note_html = render_markdown_safe(note) if note.strip() else ""
+                        socket.context.hex_note_editing = False
+                        await self._load_map_data(socket)
+                elif result_type == "situation":
+                    socket.context.map_detail = {"id": result_id}
+                    await self._refresh_map_detail(socket)
+                elif result_type == "character":
+                    await socket.push_navigate(f"{url_prefix}/character/", {"detail": result_id})
+                elif result_type == "card":
+                    # Navigate to the character that owns the card
+                    await socket.push_navigate(f"{url_prefix}/character/", {"detail": result_id})
                 return
 
             # Quick dice rolls (sidebar)
@@ -2799,10 +3093,10 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 if not hex_map and game_id:
                     hex_map = model.objects.create(name="Map", game_id=game_id)
                 if hex_map:
-                    return hex_map.pk, hex_map.hexes or {}, hex_map.rivers or [], hex_map.overlays or {}, hex_map.barriers or {}, hex_map.party_location or "", hex_map.party_trail or []
-                return None, {}, [], {}, {}, "", []
+                    return hex_map.pk, hex_map.hexes or {}, hex_map.rivers or [], hex_map.overlays or {}, hex_map.barriers or {}, hex_map.party_location or "", hex_map.party_trail or [], hex_map.notes or {}
+                return None, {}, [], {}, {}, "", [], {}
 
-            map_id, hexes, rivers, overlays, barriers, party_loc, party_trail = await _fetch_map()
+            map_id, hexes, rivers, overlays, barriers, party_loc, party_trail, notes = await _fetch_map()
 
             # Fetch timeline data (situations/notes for this game)
             timeline_entries = []
@@ -2876,10 +3170,13 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
             socket.context.hex_map_id = map_id
             socket.context.hex_map_svg = render_hex_map(
                 hexes=hexes, rivers=all_rivers, overlays=overlays,
-                barriers=barriers, edit_mode=edit_mode, show_overlays=show_overlays,
+                barriers=barriers, edit_mode=edit_mode,
+                is_keeper=socket.context.is_keeper,
+                show_overlays=show_overlays,
                 party_location=party_loc, party_trail=party_trail[-3:],
                 adjacent_hexes=adjacent,
                 timeline_locations=timeline_locs if game_id else None,
+                notes=notes,
             )
             if edit_mode:
                 socket.context.hex_map_palette = render_hex_palette(

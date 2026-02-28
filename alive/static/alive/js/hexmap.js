@@ -38,7 +38,7 @@ window.Hooks.HexMap = {
             let el = e.target;
             while (el && el !== hook.el) {
                 if (el.tagName === 'g' && el.hasAttribute('data-col')) {
-                    var eventName = el.hasAttribute('data-move') ? 'move_party' : 'set_hex';
+                    var eventName = el.hasAttribute('data-edit') ? 'set_hex' : 'hex_click';
                     hook.pushEvent(eventName, {
                         col: el.getAttribute('data-col'),
                         row: el.getAttribute('data-row')
@@ -55,6 +55,14 @@ window.Hooks.HexMap = {
         this._keyHandler = function(e) {
             if (e.key === 'Escape') {
                 hook.pushEvent('close_hex_note', {});
+                hook.pushEvent('close_hex_action', {});
+            }
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                var form = e.target.closest && e.target.closest('form');
+                if (form && hook.el.contains(form)) {
+                    e.preventDefault();
+                    form.dispatchEvent(new Event('submit', {bubbles: true, cancelable: true}));
+                }
             }
         };
         document.addEventListener('keydown', this._keyHandler);

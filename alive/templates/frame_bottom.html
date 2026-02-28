@@ -11,11 +11,11 @@
             <style>.die-face{fill:var(--color-base-content)}.die-pip{fill:var(--color-base-100)}</style>
             <div class="flex gap-3 items-center justify-center pt-4 border-t border-base-300">
                 <button class="cursor-pointer" phx-click="quick_roll_d6" title="Roll d6"
-                        onclick="this.animate([{transform:'rotate(0)'},{transform:'rotate(360deg)'}],{duration:500,easing:'ease-out'});var c=document.getElementById('app-drawer-toggle');if(c.checked){var o=new MutationObserver(function(){c.checked=true;o.disconnect()});o.observe(c,{attributes:true})}">
+                        onclick="this.animate([{transform:'rotate(0)'},{transform:'rotate(360deg)'}],{duration:500,easing:'ease-out'})">
                     {{quick_d6_svg}}
                 </button>
                 <button class="cursor-pointer" phx-click="quick_roll_d12" title="Roll d12"
-                        onclick="this.animate([{transform:'rotate(0)'},{transform:'rotate(360deg)'}],{duration:500,easing:'ease-out'});var c=document.getElementById('app-drawer-toggle');if(c.checked){var o=new MutationObserver(function(){c.checked=true;o.disconnect()});o.observe(c,{attributes:true})}">
+                        onclick="this.animate([{transform:'rotate(0)'},{transform:'rotate(360deg)'}],{duration:500,easing:'ease-out'})">
                     <svg viewBox="0 0 40 40" class="h-10 w-10">
                         <polygon points="20,2 30.6,5.4 37.1,14.4 37.1,25.6 30.6,34.6 20,38 9.4,34.6 2.9,25.6 2.9,14.4 9.4,5.4" class="die-face" opacity="0.9" stroke="var(--color-base-content)" stroke-width="4" stroke-linejoin="round"/>
                         <g stroke="var(--color-base-content)" stroke-width="1" opacity="0.6">
@@ -33,4 +33,5 @@
         </div>
     </div>
 </div>
+{% include "search.html" %}
 {% include "hand_footer.html" %}

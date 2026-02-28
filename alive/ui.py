@@ -598,11 +598,13 @@ def render_hex_map(
     rows: int = 12,
     hex_size: float = 30,
     edit_mode: bool = False,
+    is_keeper: bool = False,
     show_overlays: bool = False,
     party_location: str = "",
     party_trail: list[str] | None = None,
     adjacent_hexes: set[str] | None = None,
     timeline_locations: list[tuple[str, str]] | None = None,
+    notes: dict | None = None,
 ) -> Markup:
     """Render a hex map as inline SVG with flat-top hexes.
 
@@ -611,6 +613,7 @@ def render_hex_map(
     overlays: dict mapping "col,row" to overlay symbol_id strings (keeper-only).
     barriers: dict mapping "col,row" to list of edge indices (0-5) (keeper-only).
     edit_mode: if True, hexes are clickable (phx-click events).
+    is_keeper: if True and not edit_mode, all hexes are clickable for the keeper.
     show_overlays: if True, render overlay symbols and barriers on top.
     party_location: "col,row" of current party position.
     party_trail: list of recent past "col,row" positions (oldest first).
@@ -690,7 +693,13 @@ def render_hex_map(
             )
             if edit_mode:
                 parts.append(
-                    f'<g class="hex-click" data-col="{col}" data-row="{row}">'
+                    f'<g class="hex-click" data-col="{col}" data-row="{row}" data-edit="1">'
+                )
+            elif is_keeper:
+                move_attr = ' data-move="1"' if is_movable else ''
+                css = "hex-move" if is_movable else "hex-click"
+                parts.append(
+                    f'<g class="{css}" data-col="{col}" data-row="{row}"{move_attr}>'
                 )
             elif is_movable:
                 parts.append(
@@ -707,7 +716,7 @@ def render_hex_map(
                     f'width="{sym_size:.1f}" height="{sym_size:.1f}"/>'
                 )
 
-            if edit_mode or is_movable:
+            if edit_mode or is_keeper or is_movable:
                 parts.append('</g>')
 
     # Draw rivers (after all hexes, as overlay)
@@ -759,7 +768,8 @@ def render_hex_map(
                         parts.append(
                             f'<use href="#ovl-{ovl_id}" '
                             f'x="{cx - ovl_size / 2:.1f}" y="{cy - ovl_size / 2:.1f}" '
-                            f'width="{ovl_size:.1f}" height="{ovl_size:.1f}"/>'
+                            f'width="{ovl_size:.1f}" height="{ovl_size:.1f}" '
+                            f'style="pointer-events:none"/>'
                         )
 
         if barriers:
@@ -781,8 +791,31 @@ def render_hex_map(
                         parts.append(
                             f'<line x1="{x1:.1f}" y1="{y1:.1f}" '
                             f'x2="{x2:.1f}" y2="{y2:.1f}" '
-                            f'class="hex-barrier"/>'
+                            f'class="hex-barrier" style="pointer-events:none"/>'
                         )
+
+    # Note markers (small dot in top-right corner, shown in overlay mode)
+    if show_overlays and notes:
+        r = hex_size * 0.12
+        for key, note_text in notes.items():
+            if not note_text or not note_text.strip():
+                continue
+            try:
+                c, rw = map(int, key.split(","))
+            except (ValueError, AttributeError):
+                continue
+            if c < 0 or c >= cols or rw < 0 or rw >= rows:
+                continue
+            cx = margin + hex_size + c * 1.5 * hex_size
+            cy = margin + hex_h / 2 + rw * hex_h + (c % 2) * hex_h / 2
+            # Top-right vertex of flat-top hex is at -60° (300°), inset slightly
+            angle = math.radians(-60)
+            dx = hex_size * 0.8 * math.cos(angle)
+            dy = hex_size * 0.8 * math.sin(angle)
+            parts.append(
+                f'<circle cx="{cx + dx:.1f}" cy="{cy + dy:.1f}" r="{r:.1f}" '
+                f'class="hex-overlay" style="pointer-events:none"/>'
+            )
 
     parts.append('</svg>')
     return Markup('\n'.join(parts))
