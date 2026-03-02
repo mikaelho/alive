@@ -34,7 +34,10 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
                 </svg>
             </div>
-            <ul tabindex="-1" class="dropdown-content menu p-2 shadow-sm bg-base-100 rounded-box w-40 z-1">
+            <ul tabindex="-1" class="dropdown-content menu p-2 shadow-sm bg-base-100 rounded-box w-52 z-1">
+                {% if has_sheet_defaults %}
+                <li><a phx-click="sync_sheet_cards" phx-value-item_id="{{items.0.id}}">Sync Sheet Cards</a></li>
+                {% endif %}
                 <li><a id="delete-detail-{{items.0.id}}" class="text-error" phx-hook="ConfirmClick" data-confirm="Delete this item?" phx-click="delete_item" phx-value-item_id="{{items.0.id}}">Delete</a></li>
             </ul>
         </div>
@@ -86,7 +89,10 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
                             </svg>
                         </div>
-                        <ul tabindex="-1" class="dropdown-content menu p-2 shadow-sm bg-base-100 rounded-box w-40 z-1">
+                        <ul tabindex="-1" class="dropdown-content menu p-2 shadow-sm bg-base-100 rounded-box w-52 z-1">
+                            {% if has_sheet_defaults %}
+                            <li><a phx-click="sync_sheet_cards" phx-value-item_id="{{item.id}}">Sync Sheet Cards</a></li>
+                            {% endif %}
                             {% if filters %}
                             <li><a phx-click="unlink_item" phx-value-item_id="{{item.id}}">Unlink</a></li>
                             {% endif %}

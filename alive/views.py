@@ -115,6 +115,8 @@ class ModelContext:
     inline_create_error: str = ""
     # Current player ID from session (for visibility filtering)
     player_id: int | None = None
+    # Model-specific flags
+    has_sheet_defaults: bool = False
     # Grid/detail view mode
     view_mode: str = "detail"
     detail_item_id: str = ""
@@ -253,6 +255,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
     inline_infos = model.get_inline_info()
     inline_info_by_name = {info["relation_name"]: info for info in inline_infos}
     has_inline = bool(inline_infos)
+    has_sheet_defaults = hasattr(model, 'sheet') and hasattr(model.sheet, 'field')
 
     # Pre-resolve tag field scopes for through models
     inline_tag_scopes = {}  # {(relation_name, field_name): scope_info}
@@ -345,6 +348,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 hand_character_id=character_id if hand_is_player else None,
                 is_keeper=player_role == "keeper",
                 keeper_character_id=character_id if player_role == "keeper" else None,
+                has_sheet_defaults=has_sheet_defaults,
             )
 
             # Set initial d6 SVG with pips
@@ -644,6 +648,24 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
 
                         await _set_location()
 
+                # Auto-create default cards for new characters from their sheet
+                if item and hasattr(item, 'sheet_id') and item.sheet_id:
+                    from asgiref.sync import sync_to_async as _sta_loc
+                    from django.apps import apps as _apps_loc
+
+                    @_sta_loc(thread_sensitive=False)
+                    def _create_default_cards():
+                        SheetDefaultCard = _apps_loc.get_model('cards', 'SheetDefaultCard')
+                        Card = _apps_loc.get_model('cards', 'Card')
+                        CharacterCard = _apps_loc.get_model('cards', 'CharacterCard')
+                        for dc in SheetDefaultCard.objects.filter(sheet_id=item.sheet_id):
+                            card = Card.objects.create(name=dc.name, notes=dc.notes)
+                            CharacterCard.objects.create(
+                                character=item, card=card, level=4, tag=dc.tag,
+                            )
+
+                    await _create_default_cards()
+
                 # Reset creation state
                 socket.context.creating = False
                 socket.context.create_values = {}
@@ -665,6 +687,36 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     if success:
                         await self._refresh_view_async(socket)
                         await socket.broadcast(store.channel, {"action": "item_deleted"})
+                return
+
+            if event == "sync_sheet_cards":
+                item_id = payload.get("item_id", "")
+                if item_id and has_sheet_defaults:
+                    from asgiref.sync import sync_to_async as _sta_sync
+                    from django.apps import apps as _apps_sync
+
+                    @_sta_sync(thread_sensitive=False)
+                    def _sync():
+                        character = model.objects.get(pk=int(item_id))
+                        if not character.sheet_id:
+                            return
+                        SheetDefaultCard = _apps_sync.get_model('cards', 'SheetDefaultCard')
+                        Card = _apps_sync.get_model('cards', 'Card')
+                        CharacterCard = _apps_sync.get_model('cards', 'CharacterCard')
+                        existing = set(
+                            CharacterCard.objects.filter(character=character)
+                            .values_list('card__name', 'tag_id')
+                        )
+                        for dc in SheetDefaultCard.objects.filter(sheet_id=character.sheet_id):
+                            if (dc.name, dc.tag_id) not in existing:
+                                card = Card.objects.create(name=dc.name, notes=dc.notes)
+                                CharacterCard.objects.create(
+                                    character=character, card=card, level=4, tag=dc.tag,
+                                )
+
+                    await _sync()
+                    await self._refresh_view_async(socket)
+                    await self._broadcast_change(socket)
                 return
 
             if event == "unlink_item":
