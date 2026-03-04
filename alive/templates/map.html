@@ -85,6 +85,15 @@
                             <div class="text-sm opacity-40 italic cursor-pointer" phx-click="edit_hex_note">Click to add a note...</div>
                             {% endif %}
                         {% endif %}
+                        <div class="mt-2 pt-2 border-t border-base-300">
+                            <button class="btn btn-xs btn-ghost w-full" phx-click="open_site_map">
+                                <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/>
+                                    <circle cx="12" cy="12" r="2"/>
+                                </svg>
+                                Site Map
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -172,6 +181,9 @@
                         <div class="flex flex-col gap-1">
                             <button class="btn btn-sm btn-primary w-full" phx-click="hex_action_move">Move here</button>
                             <button class="btn btn-sm btn-ghost w-full" phx-click="hex_action_note">View note</button>
+                            {% if is_keeper %}
+                            <button class="btn btn-sm btn-ghost w-full" phx-click="open_site_map">Site Map</button>
+                            {% endif %}
                         </div>
                     </div>
                 </div>
@@ -205,6 +217,17 @@
                             <div class="text-sm opacity-40 italic cursor-pointer" phx-click="edit_hex_note">Click to add a note...</div>
                             {% endif %}
                         {% endif %}
+                        {% if is_keeper %}
+                        <div class="mt-2 pt-2 border-t border-base-300">
+                            <button class="btn btn-xs btn-ghost w-full" phx-click="open_site_map">
+                                <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/>
+                                    <circle cx="12" cy="12" r="2"/>
+                                </svg>
+                                Site Map
+                            </button>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -229,6 +252,11 @@
                 <div class="tooltip tooltip-bottom" data-tip="Add Situation">
                     <button class="btn btn-xs btn-ghost" phx-click="open_map_create" phx-value-type="situation">
                         <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+                    </button>
+                </div>
+                <div class="tooltip tooltip-bottom" data-tip="Keeper Note">
+                    <button class="btn btn-xs btn-ghost" phx-click="open_map_create" phx-value-type="keeper_note">
+                        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                     </button>
                 </div>
                 {% endif %}
@@ -270,13 +298,155 @@
         </div>
     </div>
 
+    {% if site_map_open %}
+    <div class="fixed inset-0 z-50">
+        <div class="fixed inset-0 bg-black/30" phx-click="close_site_map"></div>
+        <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
+            <div class="bg-base-100 rounded-lg shadow-lg w-full max-w-2xl pointer-events-auto" id="site-map-modal" phx-hook="SiteMap">
+                <div class="p-4">
+                    <div class="flex justify-between items-center mb-3">
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-lg font-bold">Site Map — {{site_map_hex}}</h2>
+                            {% if is_keeper %}
+                            <button class="btn btn-xs {% if site_map_edit %}btn-primary{% else %}btn-ghost{% endif %}"
+                                    phx-click="toggle_site_map_edit">
+                                {% if site_map_edit %}Done{% else %}Edit{% endif %}
+                            </button>
+                            {% endif %}
+                        </div>
+                        <button class="btn btn-ghost btn-xs" phx-click="close_site_map">
+                            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="flex gap-4">
+                        <div class="shrink-0">
+                            {{site_map_svg}}
+                        </div>
+
+                        <div class="flex-1 min-w-0">
+                            {% if site_map_edit %}
+                            <div class="flex flex-col gap-1" data-sm-edit-mode>
+                                <span class="text-xs uppercase opacity-50 font-semibold">Nodes</span>
+                                <div class="flex gap-1 flex-wrap">
+                                    <button class="btn btn-xs {% if site_map_tool == 'feature' %}btn-primary{% else %}btn-ghost{% endif %}"
+                                            phx-click="set_site_map_tool" phx-value-tool="feature">
+                                        <svg viewBox="0 0 16 16" class="h-3 w-3"><circle cx="8" cy="8" r="6" fill="currentColor" opacity="0.7"/></svg>
+                                        Feature</button>
+                                    <button class="btn btn-xs {% if site_map_tool == 'danger' %}btn-error{% else %}btn-ghost{% endif %}"
+                                            phx-click="set_site_map_tool" phx-value-tool="danger">
+                                        <svg viewBox="0 0 16 16" class="h-3 w-3"><polygon points="8,1 14.5,13 1.5,13" fill="currentColor" opacity="0.7"/></svg>
+                                        Danger</button>
+                                    <button class="btn btn-xs {% if site_map_tool == 'treasure' %}btn-warning{% else %}btn-ghost{% endif %}"
+                                            phx-click="set_site_map_tool" phx-value-tool="treasure">
+                                        <svg viewBox="0 0 16 16" class="h-3 w-3"><polygon points="8,1 15,8 8,15 1,8" fill="currentColor" opacity="0.7"/></svg>
+                                        Treasure</button>
+                                    <button class="btn btn-xs {% if site_map_tool == 'erase_node' %}btn-error{% else %}btn-ghost{% endif %}"
+                                            phx-click="set_site_map_tool" phx-value-tool="erase_node">
+                                        <svg viewBox="0 0 16 16" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l10 10M13 3L3 13"/></svg>
+                                        </button>
+                                </div>
+
+                                <span class="text-xs uppercase opacity-50 font-semibold mt-2">Routes</span>
+                                <div class="flex gap-1 flex-wrap">
+                                    <button class="btn btn-xs {% if site_map_tool == 'route' %}btn-primary{% else %}btn-ghost{% endif %}"
+                                            phx-click="set_site_map_tool" phx-value-tool="route">Route</button>
+                                    <button class="btn btn-xs {% if site_map_tool == 'erase_route' %}btn-error{% else %}btn-ghost{% endif %}"
+                                            phx-click="set_site_map_tool" phx-value-tool="erase_route">
+                                        <svg viewBox="0 0 16 16" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l10 10M13 3L3 13"/></svg>
+                                        </button>
+                                </div>
+                                {% if site_map_tool == 'route' %}
+                                <div class="text-xs opacity-50">Click two nodes. Re-click existing route to cycle: open &rarr; closed &rarr; hidden &rarr; remove.</div>
+                                {% endif %}
+
+                                <span class="text-xs uppercase opacity-50 font-semibold mt-2">Entrances</span>
+                                <div class="flex gap-1 flex-wrap">
+                                    <button class="btn btn-xs {% if site_map_tool == 'entrance' %}btn-primary{% else %}btn-ghost{% endif %}"
+                                            phx-click="set_site_map_tool" phx-value-tool="entrance">Entrance</button>
+                                    <button class="btn btn-xs {% if site_map_tool == 'erase_entrance' %}btn-error{% else %}btn-ghost{% endif %}"
+                                            phx-click="set_site_map_tool" phx-value-tool="erase_entrance">
+                                        <svg viewBox="0 0 16 16" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l10 10M13 3L3 13"/></svg>
+                                        </button>
+                                </div>
+                                {% if site_map_tool == 'entrance' %}
+                                <div class="text-xs opacity-50">Click outer node (1-6). Re-click to cycle: visible &rarr; hidden &rarr; remove.</div>
+                                {% endif %}
+                            </div>
+
+                            {% else %}
+
+                            {% if site_map_selected_type %}
+                            <div class="flex flex-col gap-2">
+                                <span class="text-xs uppercase opacity-50 font-semibold">
+                                    {% if site_map_selected_type == "node" %}Node {{site_map_selected_id}}
+                                    {% elif site_map_selected_type == "route" %}Route {{site_map_selected_id}}
+                                    {% elif site_map_selected_type == "entrance" %}Entrance {{site_map_selected_id}}
+                                    {% endif %}
+                                </span>
+
+                                {% if site_map_detail_editing == "name" %}
+                                <div phx-hook="AutoFocus" id="sm-edit-name">
+                                    <input type="text" class="input input-sm input-bordered w-full" name="value"
+                                           value="{{site_map_detail_draft}}"
+                                           phx-keyup="site_map_update_draft" autocomplete="off"/>
+                                    <div class="flex gap-1 mt-1">
+                                        <button class="btn btn-primary btn-xs" phx-click="site_map_save_edit">Save</button>
+                                        <button class="btn btn-ghost btn-xs" phx-click="site_map_cancel_edit">Cancel</button>
+                                    </div>
+                                </div>
+                                {% else %}
+                                <div class="cursor-pointer hover:bg-base-200 rounded px-1 -mx-1"
+                                     phx-click="site_map_start_edit" phx-value-field="name">
+                                    {% if site_map_detail_name %}
+                                    <span class="font-semibold">{{site_map_detail_name}}</span>
+                                    {% else %}
+                                    <span class="text-sm opacity-40 italic">Click to name...</span>
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+
+                                <span class="text-xs uppercase opacity-50 font-semibold">Notes</span>
+                                {% if site_map_detail_editing == "notes" %}
+                                <div phx-hook="AutoFocus" id="sm-edit-notes">
+                                    <textarea class="textarea textarea-sm textarea-bordered w-full" name="value" rows="4"
+                                              phx-keyup="site_map_update_draft">{{site_map_detail_draft}}</textarea>
+                                    <div class="flex gap-1 mt-1">
+                                        <button class="btn btn-primary btn-xs" phx-click="site_map_save_edit">Save</button>
+                                        <button class="btn btn-ghost btn-xs" phx-click="site_map_cancel_edit">Cancel</button>
+                                    </div>
+                                </div>
+                                {% else %}
+                                <div class="cursor-pointer hover:bg-base-200 rounded px-1 -mx-1 min-h-6"
+                                     phx-click="site_map_start_edit" phx-value-field="notes">
+                                    {% if site_map_detail_notes %}
+                                    <span class="text-sm">{{site_map_detail_notes}}</span>
+                                    {% else %}
+                                    <span class="text-sm opacity-40 italic">Click to add notes...</span>
+                                    {% endif %}
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% else %}
+                            <div class="text-sm opacity-40 italic">Click an element to view details</div>
+                            {% endif %}
+
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     {% if map_create_open %}
     <div class="fixed inset-0 z-50">
         <div class="fixed inset-0 bg-black/30" phx-click="map_cancel_create"></div>
         <div class="fixed inset-0 flex items-center justify-center pointer-events-none">
             <div class="bg-base-100 rounded-lg shadow-lg w-full max-w-sm pointer-events-auto">
                 <div class="p-4 create-form" phx-hook="AutoFocus">
-                    <h2 class="text-lg font-bold mb-3">New {% if map_create_type == "note" %}Note{% else %}Situation{% endif %}</h2>
+                    <h2 class="text-lg font-bold mb-3">New {% if map_create_type == "note" %}Note{% elif map_create_type == "keeper_note" %}Keeper Note{% else %}Situation{% endif %}</h2>
                     {% if map_create_error %}
                     <div class="alert alert-error mb-3">{{map_create_error}}</div>
                     {% endif %}

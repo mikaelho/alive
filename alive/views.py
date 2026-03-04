@@ -129,7 +129,8 @@ class ModelContext:
     hand_card_count: int = 0
     hand_drawn: bool = False
     hand_cards: list[dict] = field(default_factory=list)
-    hand_draw_options: list[int] = field(default_factory=list)
+    hand_can_draw: bool = False
+    hand_collapsed: bool = False
     hand_active_situation_id: int | None = None
     # Situation page state
     situation_cards: list[dict] = field(default_factory=list)
@@ -203,6 +204,20 @@ class ModelContext:
     time_advance_shift: str = ""
     # Current game time display
     current_game_time: str = ""
+    # Site map state
+    site_map_open: bool = False
+    site_map_hex: str = ""
+    site_map_data: dict = field(default_factory=dict)
+    site_map_svg: str = ""
+    site_map_edit: bool = False
+    site_map_tool: str = ""  # "feature", "danger", "treasure", "route", "entrance", "erase_node", "erase_route", "erase_entrance"
+    site_map_route_from: int = -1  # first node index for 2-click route creation
+    site_map_selected_type: str = ""  # "node", "route", "entrance"
+    site_map_selected_id: str = ""  # node idx or "from-to" for routes
+    site_map_detail_name: str = ""
+    site_map_detail_notes: str = ""
+    site_map_detail_editing: str = ""  # "name" or "notes"
+    site_map_detail_draft: str = ""
     # Search modal state
     search_open: bool = False
     search_query: str = ""
@@ -357,6 +372,8 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
 
             if hand_is_player:
                 await self._load_hand_data(socket)
+                if socket.context.situation_dice:
+                    socket.context.hand_collapsed = True
 
             if is_connected(socket):
                 await socket.subscribe(store.channel)
@@ -1395,30 +1412,34 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                             break
                 return
 
+            if event == "toggle_hand_collapsed":
+                socket.context.hand_collapsed = not socket.context.hand_collapsed
+                return
+
             if event == "draw_hand":
-                count = int(payload.get("count", 1))
                 character_id = socket.context.hand_character_id
-                if character_id and count > 0:
+                if character_id:
                     import random
                     from asgiref.sync import sync_to_async as _sta
                     from django.apps import apps
 
                     @_sta(thread_sensitive=False)
-                    def _draw(count=count):
+                    def _draw_one():
                         CharacterCard = apps.get_model('cards', 'CharacterCard')
                         Hand = apps.get_model('cards', 'Hand')
 
-                        all_cards = list(CharacterCard.objects.filter(character_id=character_id))
-                        drawn = random.sample(all_cards, min(count, len(all_cards)))
+                        hand, _created = Hand.objects.get_or_create(
+                            character_id=character_id, defaults={"name": "Hand"}
+                        )
+                        existing_pks = set(hand.cards.values_list('pk', flat=True))
+                        available = list(CharacterCard.objects.filter(
+                            character_id=character_id
+                        ).exclude(tag__name="Attribute").exclude(pk__in=existing_pks))
+                        if available:
+                            card = random.choice(available)
+                            hand.cards.add(card)
 
-                        # Delete existing hands for this character
-                        Hand.objects.filter(character_id=character_id).delete()
-
-                        # Create new hand
-                        hand = Hand.objects.create(name="Hand", character_id=character_id)
-                        hand.cards.set(drawn)
-
-                    await _draw()
+                    await _draw_one()
                     await self._load_hand_data(socket)
                 return
 
@@ -1432,14 +1453,31 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     @_sta(thread_sensitive=False)
                     def _toggle():
                         Situation = apps.get_model('cards', 'Situation')
+                        CharacterCard = apps.get_model('cards', 'CharacterCard')
                         sit = Situation.objects.get(pk=situation_id)
                         if sit.dice:
                             return  # Frozen after roll
-                        cc_pk = int(card_id)
-                        if sit.cards.filter(pk=cc_pk).exists():
-                            sit.cards.remove(cc_pk)
+                        cc = CharacterCard.objects.select_related('tag').get(pk=int(card_id))
+                        is_attr = cc.tag_id is not None and cc.tag.name == "Attribute"
+                        if is_attr:
+                            # Attribute card: only one at a time per character
+                            attr_in_sit = sit.cards.filter(
+                                character_id=cc.character_id, tag__name="Attribute"
+                            )
+                            if attr_in_sit.filter(pk=cc.pk).exists():
+                                # Clicked the already-selected attribute → remove it
+                                sit.cards.remove(cc.pk)
+                            else:
+                                # Swap: remove old attribute(s), add this one
+                                for old in attr_in_sit:
+                                    sit.cards.remove(old.pk)
+                                sit.cards.add(cc.pk)
                         else:
-                            sit.cards.add(cc_pk)
+                            # Normal toggle
+                            if sit.cards.filter(pk=cc.pk).exists():
+                                sit.cards.remove(cc.pk)
+                            else:
+                                sit.cards.add(cc.pk)
 
                     await _toggle()
                     await self._load_hand_data(socket)
@@ -1829,6 +1867,158 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 await self._load_map_data(socket)
                 return
 
+            # ── Site Map Events ──
+
+            if event == "open_site_map":
+                hex_key = socket.context.hex_selected_hex or socket.context.hex_action_hex
+                if not hex_key or not socket.context.is_keeper:
+                    return
+                map_id = socket.context.hex_map_id
+                if not map_id:
+                    return
+
+                from asgiref.sync import sync_to_async as _sta_sm
+
+                @_sta_sm(thread_sensitive=False)
+                def _load_site_map():
+                    hex_map = model.objects.get(pk=map_id)
+                    site_maps = hex_map.site_maps or {}
+                    return site_maps.get(hex_key, {"nodes": {}, "routes": [], "entrances": []})
+
+                site_data = await _load_site_map()
+                socket.context.site_map_open = True
+                socket.context.site_map_hex = hex_key
+                socket.context.site_map_data = site_data
+                socket.context.site_map_edit = False
+                socket.context.site_map_tool = ""
+                socket.context.site_map_route_from = -1
+                socket.context.site_map_selected_type = ""
+                socket.context.site_map_selected_id = ""
+                socket.context.site_map_detail_name = ""
+                socket.context.site_map_detail_notes = ""
+                socket.context.site_map_detail_editing = ""
+                socket.context.site_map_detail_draft = ""
+                from alive.ui import render_site_map_svg
+                socket.context.site_map_svg = render_site_map_svg(site_data)
+                await self._load_map_data(socket)
+                return
+
+            if event == "close_site_map":
+                socket.context.site_map_open = False
+                socket.context.site_map_hex = ""
+                socket.context.site_map_data = {}
+                socket.context.site_map_svg = ""
+                socket.context.site_map_edit = False
+                socket.context.site_map_tool = ""
+                socket.context.site_map_route_from = -1
+                socket.context.site_map_selected_type = ""
+                socket.context.site_map_selected_id = ""
+                socket.context.site_map_detail_editing = ""
+                socket.context.site_map_detail_draft = ""
+                await self._load_map_data(socket)
+                return
+
+            if event == "toggle_site_map_edit":
+                if not socket.context.is_keeper:
+                    return
+                socket.context.site_map_edit = not socket.context.site_map_edit
+                socket.context.site_map_tool = ""
+                socket.context.site_map_route_from = -1
+                socket.context.site_map_selected_type = ""
+                socket.context.site_map_selected_id = ""
+                socket.context.site_map_detail_editing = ""
+                socket.context.site_map_detail_draft = ""
+                await self._load_map_data(socket)
+                return
+
+            if event == "set_site_map_tool":
+                tool = payload.get("tool", "")
+                # Toggle off if same tool clicked again
+                if socket.context.site_map_tool == tool:
+                    socket.context.site_map_tool = ""
+                else:
+                    socket.context.site_map_tool = tool
+                socket.context.site_map_route_from = -1
+                socket.context.site_map_selected_type = ""
+                socket.context.site_map_selected_id = ""
+                socket.context.site_map_detail_editing = ""
+                await self._load_map_data(socket)
+                return
+
+            if event == "site_map_click":
+                if not socket.context.site_map_open or not socket.context.is_keeper:
+                    return
+                click_type = payload.get("type", "")  # "node", "empty_node", "route", "entrance"
+                click_id = payload.get("id", "")
+
+                if socket.context.site_map_edit:
+                    await self._handle_site_map_edit_click(socket, click_type, click_id)
+                else:
+                    # View mode: select element for detail
+                    await self._handle_site_map_view_click(socket, click_type, click_id)
+                await self._load_map_data(socket)
+                return
+
+            if event == "site_map_start_edit":
+                field = payload.get("field", "")
+                if field == "name":
+                    socket.context.site_map_detail_editing = "name"
+                    socket.context.site_map_detail_draft = socket.context.site_map_detail_name
+                elif field == "notes":
+                    socket.context.site_map_detail_editing = "notes"
+                    socket.context.site_map_detail_draft = socket.context.site_map_detail_notes
+                await self._load_map_data(socket)
+                return
+
+            if event == "site_map_update_draft":
+                socket.context.site_map_detail_draft = payload.get("value", "")
+                return
+
+            if event == "site_map_save_edit":
+                field = socket.context.site_map_detail_editing
+                value = socket.context.site_map_detail_draft
+                sel_type = socket.context.site_map_selected_type
+                sel_id = socket.context.site_map_selected_id
+                data = socket.context.site_map_data
+
+                if sel_type == "node" and sel_id in data.get("nodes", {}):
+                    data["nodes"][sel_id][field] = value
+                    if field == "name":
+                        socket.context.site_map_detail_name = value
+                    else:
+                        socket.context.site_map_detail_notes = value
+                elif sel_type == "route":
+                    for r in data.get("routes", []):
+                        from alive.ui import _sm_route_key
+                        if _sm_route_key(r["from"], r["to"]) == sel_id:
+                            r[field] = value
+                            if field == "name":
+                                socket.context.site_map_detail_name = value
+                            else:
+                                socket.context.site_map_detail_notes = value
+                            break
+                elif sel_type == "entrance":
+                    for e in data.get("entrances", []):
+                        if str(e["node"]) == sel_id:
+                            e[field] = value
+                            if field == "name":
+                                socket.context.site_map_detail_name = value
+                            else:
+                                socket.context.site_map_detail_notes = value
+                            break
+
+                socket.context.site_map_detail_editing = ""
+                socket.context.site_map_detail_draft = ""
+                await self._save_site_map_data(socket)
+                await self._load_map_data(socket)
+                return
+
+            if event == "site_map_cancel_edit":
+                socket.context.site_map_detail_editing = ""
+                socket.context.site_map_detail_draft = ""
+                await self._load_map_data(socket)
+                return
+
             if event == "move_party" or event == "hex_action_move":
                 if not socket.context.is_keeper or socket.context.hex_map_edit:
                     return
@@ -1911,23 +2101,31 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 from asgiref.sync import sync_to_async as _sta
                 from django.apps import apps as _apps_mc
 
-                @_sta(thread_sensitive=False)
-                def _create_entry():
-                    Situation = _apps_mc.get_model('cards', 'Situation')
-                    HexMap = _apps_mc.get_model('cards', 'HexMap')
-                    Game = _apps_mc.get_model('cards', 'Game')
-                    loc = ""
-                    hm = HexMap.objects.filter(game_id=game_id).first()
-                    if hm and hm.party_location:
-                        loc = hm.party_location
-                    game = Game.objects.get(pk=game_id)
-                    return Situation.objects.create(
-                        name=name, notes=notes, game_id=game_id,
-                        situation_type=sit_type, location=loc,
-                        game_time=game.game_time or {},
-                    )
-
-                new_sit = await _create_entry()
+                if sit_type == "keeper_note":
+                    @_sta(thread_sensitive=False)
+                    def _create_keeper_note():
+                        KeeperNote = _apps_mc.get_model('cards', 'KeeperNote')
+                        return KeeperNote.objects.create(
+                            name=name, notes=notes, game_id=game_id,
+                        )
+                    await _create_keeper_note()
+                else:
+                    @_sta(thread_sensitive=False)
+                    def _create_entry():
+                        Situation = _apps_mc.get_model('cards', 'Situation')
+                        HexMap = _apps_mc.get_model('cards', 'HexMap')
+                        Game = _apps_mc.get_model('cards', 'Game')
+                        loc = ""
+                        hm = HexMap.objects.filter(game_id=game_id).first()
+                        if hm and hm.party_location:
+                            loc = hm.party_location
+                        game = Game.objects.get(pk=game_id)
+                        return Situation.objects.create(
+                            name=name, notes=notes, game_id=game_id,
+                            situation_type=sit_type, location=loc,
+                            game_time=game.game_time or {},
+                        )
+                    await _create_entry()
                 socket.context.map_create_open = False
                 socket.context.map_create_type = ""
                 socket.context.map_create_name = ""
@@ -3145,10 +3343,10 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 if not hex_map and game_id:
                     hex_map = model.objects.create(name="Map", game_id=game_id)
                 if hex_map:
-                    return hex_map.pk, hex_map.hexes or {}, hex_map.rivers or [], hex_map.overlays or {}, hex_map.barriers or {}, hex_map.party_location or "", hex_map.party_trail or [], hex_map.notes or {}
-                return None, {}, [], {}, {}, "", [], {}
+                    return hex_map.pk, hex_map.hexes or {}, hex_map.rivers or [], hex_map.overlays or {}, hex_map.barriers or {}, hex_map.party_location or "", hex_map.party_trail or [], hex_map.notes or {}, hex_map.site_maps or {}
+                return None, {}, [], {}, {}, "", [], {}, {}
 
-            map_id, hexes, rivers, overlays, barriers, party_loc, party_trail, notes = await _fetch_map()
+            map_id, hexes, rivers, overlays, barriers, party_loc, party_trail, notes, site_maps = await _fetch_map()
 
             # Fetch timeline data (situations/notes for this game)
             timeline_entries = []
@@ -3229,6 +3427,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 adjacent_hexes=adjacent,
                 timeline_locations=timeline_locs if game_id else None,
                 notes=notes,
+                site_maps=site_maps,
             )
             if edit_mode:
                 socket.context.hex_map_palette = render_hex_palette(
@@ -3238,9 +3437,231 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     active_overlay=socket.context.hex_active_overlay,
                 )
 
+            # Refresh site map SVG if modal is open
+            if socket.context.site_map_open and socket.context.site_map_hex:
+                from alive.ui import render_site_map_svg
+                socket.context.site_map_svg = render_site_map_svg(
+                    site_data=socket.context.site_map_data,
+                    edit_mode=socket.context.site_map_edit,
+                    active_tool=socket.context.site_map_tool,
+                    route_from=socket.context.site_map_route_from,
+                    selected_type=socket.context.site_map_selected_type,
+                    selected_id=socket.context.site_map_selected_id,
+                )
+
             # Refresh detail popup if open
             if socket.context.map_detail:
                 await self._refresh_map_detail(socket)
+
+        async def _save_site_map_data(self, socket: LiveViewSocket[ModelContext]):
+            """Persist site_map_data to DB for the current hex."""
+            map_id = socket.context.hex_map_id
+            hex_key = socket.context.site_map_hex
+            if not map_id or not hex_key:
+                return
+            site_data = socket.context.site_map_data
+
+            from asgiref.sync import sync_to_async as _sta_sms
+
+            @_sta_sms(thread_sensitive=False)
+            def _save():
+                hex_map = model.objects.get(pk=map_id)
+                site_maps = hex_map.site_maps or {}
+                # Only store if there's actual content
+                has_content = (
+                    site_data.get("nodes")
+                    or site_data.get("routes")
+                    or site_data.get("entrances")
+                )
+                if has_content:
+                    site_maps[hex_key] = site_data
+                else:
+                    site_maps.pop(hex_key, None)
+                hex_map.site_maps = site_maps
+                hex_map.save(update_fields=["site_maps"])
+
+            await _save()
+
+        async def _handle_site_map_edit_click(self, socket, click_type, click_id):
+            """Handle clicks in site map edit mode."""
+            from alive.ui import _sm_is_valid_route, _sm_route_key
+            tool = socket.context.site_map_tool
+            data = socket.context.site_map_data
+
+            if not data.get("nodes"):
+                data["nodes"] = {}
+            if not data.get("routes"):
+                data["routes"] = []
+            if not data.get("entrances"):
+                data["entrances"] = []
+
+            # Direct click on existing route — cycle types (no deletion)
+            if click_type == "route" and tool != "erase_route":
+                for r in data["routes"]:
+                    if _sm_route_key(r["from"], r["to"]) == click_id:
+                        if r["type"] == "open":
+                            r["type"] = "closed"
+                        elif r["type"] == "closed":
+                            r["type"] = "hidden"
+                        else:
+                            r["type"] = "open"
+                        await self._save_site_map_data(socket)
+                        break
+                socket.context.site_map_route_from = -1
+                return
+
+            # Direct click on existing entrance — cycle types (no deletion)
+            if click_type == "entrance" and tool != "erase_entrance":
+                eidx = int(click_id)
+                for e in data["entrances"]:
+                    if e["node"] == eidx:
+                        if e["type"] == "visible":
+                            e["type"] = "hidden"
+                        else:
+                            e["type"] = "visible"
+                        await self._save_site_map_data(socket)
+                        break
+                return
+
+            # Node placement tools
+            if tool in ("feature", "danger", "treasure"):
+                if click_type in ("node", "empty_node"):
+                    idx = click_id
+                    data["nodes"][idx] = {
+                        "type": tool,
+                        "name": "",
+                        "notes": "",
+                    }
+                    await self._save_site_map_data(socket)
+                return
+
+            # Route tool: 2-click creation
+            if tool == "route":
+                if click_type in ("node", "empty_node"):
+                    idx = int(click_id)
+                    if socket.context.site_map_route_from < 0:
+                        socket.context.site_map_route_from = idx
+                    else:
+                        first = socket.context.site_map_route_from
+                        socket.context.site_map_route_from = -1
+                        if first != idx and _sm_is_valid_route(first, idx):
+                            rkey = _sm_route_key(first, idx)
+                            existing = [
+                                r for r in data["routes"]
+                                if _sm_route_key(r["from"], r["to"]) == rkey
+                            ]
+                            if existing:
+                                r = existing[0]
+                                if r["type"] == "open":
+                                    r["type"] = "closed"
+                                elif r["type"] == "closed":
+                                    r["type"] = "hidden"
+                                else:
+                                    r["type"] = "open"
+                            else:
+                                data["routes"].append({
+                                    "from": min(first, idx),
+                                    "to": max(first, idx),
+                                    "type": "open",
+                                    "name": "",
+                                    "notes": "",
+                                })
+                            await self._save_site_map_data(socket)
+                return
+
+            # Entrance tool: click on outer node to add/cycle
+            if tool == "entrance":
+                if click_type in ("node", "empty_node"):
+                    idx = int(click_id)
+                    if 1 <= idx <= 6:
+                        existing = [e for e in data["entrances"] if e["node"] == idx]
+                        if existing:
+                            e = existing[0]
+                            if e["type"] == "visible":
+                                e["type"] = "hidden"
+                            else:
+                                e["type"] = "visible"
+                        else:
+                            data["entrances"].append({
+                                "node": idx,
+                                "type": "visible",
+                                "name": "",
+                                "notes": "",
+                            })
+                        await self._save_site_map_data(socket)
+                return
+
+            # Erase tools
+            if tool == "erase_node":
+                if click_type == "node":
+                    data["nodes"].pop(click_id, None)
+                    # Also remove routes and entrances connected to this node
+                    idx = int(click_id)
+                    data["routes"] = [
+                        r for r in data["routes"]
+                        if r["from"] != idx and r["to"] != idx
+                    ]
+                    data["entrances"] = [
+                        e for e in data["entrances"] if e["node"] != idx
+                    ]
+                    await self._save_site_map_data(socket)
+                return
+
+            if tool == "erase_route":
+                if click_type == "route":
+                    from alive.ui import _sm_route_key as _rk
+                    data["routes"] = [
+                        r for r in data["routes"]
+                        if _rk(r["from"], r["to"]) != click_id
+                    ]
+                    await self._save_site_map_data(socket)
+                return
+
+            if tool == "erase_entrance":
+                if click_type == "entrance":
+                    idx = int(click_id)
+                    data["entrances"] = [
+                        e for e in data["entrances"] if e["node"] != idx
+                    ]
+                    await self._save_site_map_data(socket)
+                return
+
+        async def _handle_site_map_view_click(self, socket, click_type, click_id):
+            """Handle clicks in site map view mode — select element for detail."""
+            from alive.ui import _sm_route_key
+            data = socket.context.site_map_data
+
+            socket.context.site_map_detail_editing = ""
+            socket.context.site_map_detail_draft = ""
+
+            if click_type == "node" and click_id in data.get("nodes", {}):
+                node = data["nodes"][click_id]
+                socket.context.site_map_selected_type = "node"
+                socket.context.site_map_selected_id = click_id
+                socket.context.site_map_detail_name = node.get("name", "")
+                socket.context.site_map_detail_notes = node.get("notes", "")
+            elif click_type == "route":
+                for r in data.get("routes", []):
+                    if _sm_route_key(r["from"], r["to"]) == click_id:
+                        socket.context.site_map_selected_type = "route"
+                        socket.context.site_map_selected_id = click_id
+                        socket.context.site_map_detail_name = r.get("name", "")
+                        socket.context.site_map_detail_notes = r.get("notes", "")
+                        break
+            elif click_type == "entrance":
+                for e in data.get("entrances", []):
+                    if str(e["node"]) == click_id:
+                        socket.context.site_map_selected_type = "entrance"
+                        socket.context.site_map_selected_id = click_id
+                        socket.context.site_map_detail_name = e.get("name", "")
+                        socket.context.site_map_detail_notes = e.get("notes", "")
+                        break
+            else:
+                # Deselect
+                socket.context.site_map_selected_type = ""
+                socket.context.site_map_selected_id = ""
+                socket.context.site_map_detail_name = ""
+                socket.context.site_map_detail_notes = ""
 
         async def _load_hand_data(self, socket: LiveViewSocket[ModelContext]):
             """Load hand data for the player's character."""
@@ -3259,12 +3680,16 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 Hand = apps.get_model('cards', 'Hand')
                 Situation = apps.get_model('cards', 'Situation')
 
-                card_count = CharacterCard.objects.filter(character_id=character_id).count()
+                non_attr_count = CharacterCard.objects.filter(
+                    character_id=character_id
+                ).exclude(tag__name="Attribute").count()
 
                 hand = Hand.objects.filter(character_id=character_id).order_by('-id').first()
                 hand_cards = []
+                hand_drawn = False
                 if hand:
-                    for cc in hand.cards.select_related('card').all():
+                    hand_drawn = True
+                    for cc in hand.cards.select_related('card', 'tag').all():
                         from cards.models.card import get_bands_for_level
                         hand_cards.append({
                             "id": str(cc.pk),
@@ -3272,7 +3697,38 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                             "notes": cc.card.notes or "",
                             "level": cc.level,
                             "bands": get_bands_for_level(cc.level),
+                            "is_attribute": cc.tag_id is not None and cc.tag.name == "Attribute",
                         })
+
+                    # Add attribute cards not already in the hand (always shown)
+                    hand_pks = set(hand.cards.values_list('pk', flat=True))
+                else:
+                    hand_pks = set()
+
+                # Always add attribute cards (shown regardless of draw state)
+                for cc in CharacterCard.objects.filter(
+                    character_id=character_id, tag__name="Attribute"
+                ).select_related('card', 'tag').exclude(pk__in=hand_pks):
+                    from cards.models.card import get_bands_for_level
+                    hand_cards.append({
+                        "id": str(cc.pk),
+                        "name": cc.card.name,
+                        "notes": cc.card.notes or "",
+                        "level": cc.level,
+                        "bands": get_bands_for_level(cc.level),
+                        "is_attribute": True,
+                    })
+
+                # Sort: attribute cards first, then normal cards
+                hand_cards.sort(key=lambda c: (not c["is_attribute"], c["name"]))
+
+                # Mark first non-attribute card for visual separator
+                has_attr = any(c["is_attribute"] for c in hand_cards)
+                if has_attr:
+                    for c in hand_cards:
+                        if not c["is_attribute"]:
+                            c["separator_before"] = True
+                            break
 
                 # Look up active situation (latest by pk for this game)
                 active_sit = None
@@ -3290,14 +3746,27 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
 
                 sit_dice = active_sit.dice if active_sit else []
 
-                return card_count, hand_cards, active_sit, sit_dice
+                # Determine if player can draw more cards
+                # Locked when any card from this character is in the active situation
+                hand_locked = False
+                if active_sit:
+                    hand_locked = active_sit.cards.filter(
+                        character_id=character_id
+                    ).exists()
+                drawn_non_attr = sum(1 for c in hand_cards if not c["is_attribute"])
+                hand_can_draw = (
+                    not hand_locked
+                    and drawn_non_attr < non_attr_count
+                )
 
-            card_count, hand_cards, active_sit, sit_dice = await _fetch()
+                return non_attr_count, hand_cards, hand_drawn, hand_can_draw, active_sit, sit_dice
 
-            socket.context.hand_card_count = card_count
-            socket.context.hand_drawn = len(hand_cards) > 0
+            non_attr_count, hand_cards, hand_drawn, hand_can_draw, active_sit, sit_dice = await _fetch()
+
+            socket.context.hand_card_count = non_attr_count
+            socket.context.hand_drawn = hand_drawn
             socket.context.hand_cards = hand_cards
-            socket.context.hand_draw_options = list(range(1, card_count + 1))
+            socket.context.hand_can_draw = hand_can_draw
             socket.context.hand_active_situation_id = active_sit.pk if active_sit else None
             # Only set situation_dice if not already set by _load_situation_data (which has richer data)
             if not socket.context.situation_dice:
@@ -3332,7 +3801,7 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                     else:
                         str_val = str(val) if val else ""
                     if str_val:
-                        display_fields.append({"value": str_val})
+                        display_fields.append({"value": str_val, "value_html": render_markdown_safe(str_val)})
                 result.append({
                     "id": str(item.pk),
                     "title": title_val,

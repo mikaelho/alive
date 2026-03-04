@@ -68,7 +68,7 @@
             <div class="card-body p-4">
                 <h2 class="card-title text-base">{{item.title}}</h2>
                 {% for df in item.display_fields %}
-                <div class="text-sm text-base-content/70">{{df.value}}</div>
+                <div class="text-sm text-base-content/70 prose prose-sm line-clamp-2">{{df.value_html}}</div>
                 {% endfor %}
             </div>
         </div>

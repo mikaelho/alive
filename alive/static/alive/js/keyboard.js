@@ -61,6 +61,38 @@ function initKeyboardShortcuts() {
             }
         }
 
+        // Plain Enter in textarea: continue list indentation
+        if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+            var ta = document.activeElement;
+            if (ta && ta.tagName === 'TEXTAREA') {
+                var pos = ta.selectionStart;
+                var val = ta.value;
+                // Find the current line
+                var lineStart = val.lastIndexOf('\n', pos - 1) + 1;
+                var line = val.substring(lineStart, pos);
+                // Match leading whitespace + optional list marker (- or * or digit. followed by space)
+                var match = line.match(/^(\s*(?:[-*]\s+|\d+\.\s+)?)/);
+                if (match && match[1].length > 0) {
+                    var prefix = match[1];
+                    var content = line.substring(prefix.length);
+                    if (content.length > 0) {
+                        // Line has content after prefix — continue the list
+                        e.preventDefault();
+                        var insert = '\n' + prefix;
+                        ta.setRangeText(insert, pos, pos, 'end');
+                        ta.dispatchEvent(new Event('input', {bubbles: true}));
+                        ta.dispatchEvent(new Event('keyup', {bubbles: true}));
+                    } else {
+                        // Line is just the prefix — remove it and insert a plain newline
+                        e.preventDefault();
+                        ta.setRangeText('\n', lineStart, pos, 'end');
+                        ta.dispatchEvent(new Event('input', {bubbles: true}));
+                        ta.dispatchEvent(new Event('keyup', {bubbles: true}));
+                    }
+                }
+            }
+        }
+
         // Cmd+Enter / Ctrl+Enter to save/confirm
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             // Check for picker modal first

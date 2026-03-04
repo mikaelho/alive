@@ -605,6 +605,7 @@ def render_hex_map(
     adjacent_hexes: set[str] | None = None,
     timeline_locations: list[tuple[str, str]] | None = None,
     notes: dict | None = None,
+    site_maps: dict | None = None,
 ) -> Markup:
     """Render a hex map as inline SVG with flat-top hexes.
 
@@ -794,6 +795,31 @@ def render_hex_map(
                             f'class="hex-barrier" style="pointer-events:none"/>'
                         )
 
+    # Site map indicators (small hex icon in bottom-right, shown in overlay mode)
+    if show_overlays and site_maps:
+        for key in site_maps:
+            sm_data = site_maps[key]
+            if not (sm_data.get("nodes") or sm_data.get("routes") or sm_data.get("entrances")):
+                continue
+            try:
+                c, rw = map(int, key.split(","))
+            except (ValueError, AttributeError):
+                continue
+            if c < 0 or c >= cols or rw < 0 or rw >= rows:
+                continue
+            cx = margin + hex_size + c * 1.5 * hex_size
+            cy = margin + hex_h / 2 + rw * hex_h + (c % 2) * hex_h / 2
+            # Bottom center of hex, inset
+            ix, iy = cx, cy + hex_size * 0.7
+            s = hex_size * 0.15
+            hex_icon_pts = " ".join(
+                f"{ix + s * math.cos(math.radians(-90 + j * 60)):.1f},{iy + s * math.sin(math.radians(-90 + j * 60)):.1f}"
+                for j in range(6)
+            )
+            parts.append(
+                f'<polygon points="{hex_icon_pts}" fill="var(--color-primary)" opacity="0.6" style="pointer-events:none"/>'
+            )
+
     # Note markers (small dot in top-right corner, shown in overlay mode)
     if show_overlays and notes:
         r = hex_size * 0.12
@@ -942,3 +968,219 @@ def render_overlay_palette(active_overlay: str = "") -> Markup:
             f'{label}</button>'
         )
     return Markup('\n'.join(items))
+
+
+# ── Site Map SVG Rendering ──────────────────────────────────────────
+
+# 7 node positions for a pointy-top hex inscribed in a 280x280 SVG
+# 0=center, 1=top, 2=top-right, 3=bottom-right, 4=bottom, 5=bottom-left, 6=top-left
+_SM_CX, _SM_CY = 140, 140
+_SM_R = 100  # radius of hex
+
+def _sm_node_pos(idx: int) -> tuple[float, float]:
+    """Return (x, y) for site map node index (0=center, 1-6=vertices of pointy-top hex)."""
+    if idx == 0:
+        return (_SM_CX, _SM_CY)
+    # Pointy-top: vertex 1 (top) is at -90°, then every 60°
+    angle = math.radians(-90 + (idx - 1) * 60)
+    return (_SM_CX + _SM_R * math.cos(angle), _SM_CY + _SM_R * math.sin(angle))
+
+# 12 valid routes: center-to-outer (6) + adjacent outer pairs (6)
+_SM_VALID_ROUTES = set()
+for _i in range(1, 7):
+    _SM_VALID_ROUTES.add((0, _i))
+    _SM_VALID_ROUTES.add((_i, (_i % 6) + 1))  # 1-2, 2-3, 3-4, 4-5, 5-6, 6-1
+
+def _sm_route_key(a: int, b: int) -> str:
+    """Canonical route key string."""
+    return f"{min(a, b)}-{max(a, b)}"
+
+def _sm_is_valid_route(a: int, b: int) -> bool:
+    """Check if a route between two nodes is valid."""
+    pair = (min(a, b), max(a, b))
+    return pair in _SM_VALID_ROUTES
+
+
+def render_site_map_svg(
+    site_data: dict,
+    edit_mode: bool = False,
+    active_tool: str = "",
+    route_from: int = -1,
+    selected_type: str = "",
+    selected_id: str = "",
+) -> str:
+    """Render a 280x280 site map SVG.
+
+    site_data: {"nodes": {"0": {"type": "feature", "name": "", "notes": ""}, ...},
+                "routes": [{"from": 0, "to": 1, "type": "open"}, ...],
+                "entrances": [{"node": 1, "type": "visible"}, ...]}
+    """
+    nodes = site_data.get("nodes", {})
+    routes = site_data.get("routes", [])
+    entrances = site_data.get("entrances", [])
+
+    parts = [
+        '<svg viewBox="0 0 280 280" xmlns="http://www.w3.org/2000/svg" '
+        'class="w-full h-full" style="max-width:280px;max-height:280px;">',
+        '<style>',
+        '  .sm-hex { fill: none; stroke: var(--color-base-content); stroke-width: 1; opacity: 0.15; }',
+        '  .sm-node { cursor: pointer; }',
+        '  .sm-node-shape { stroke-width: 2; }',
+        '  .sm-empty { fill: transparent; stroke: var(--color-base-content); stroke-width: 1; opacity: 0.2; stroke-dasharray: 3 3; cursor: pointer; }',
+        '  .sm-route { stroke-width: 2.5; fill: none; cursor: pointer; }',
+        '  .sm-route-hit { stroke-width: 14; fill: none; stroke: transparent; pointer-events: stroke; cursor: pointer; }',
+        '  .sm-entrance-arrow { stroke-width: 2; fill: none; }',
+        '  .sm-label { font-size: 9px; fill: var(--color-base-content); text-anchor: middle; dominant-baseline: central; opacity: 0.4; pointer-events: none; }',
+        '  .sm-selected { filter: drop-shadow(0 0 4px var(--color-primary)); }',
+        '  .sm-route-from { filter: drop-shadow(0 0 4px var(--color-secondary)); }',
+        '</style>',
+    ]
+
+    # Background hex outline (pointy-top)
+    hex_pts = []
+    for i in range(6):
+        angle = math.radians(-90 + i * 60)
+        hx = _SM_CX + _SM_R * 1.15 * math.cos(angle)
+        hy = _SM_CY + _SM_R * 1.15 * math.sin(angle)
+        hex_pts.append(f"{hx:.1f},{hy:.1f}")
+    parts.append(f'<polygon points="{" ".join(hex_pts)}" class="sm-hex"/>')
+
+    node_size = 14
+
+    # ── Routes ──
+    for route in routes:
+        rf, rt = route["from"], route["to"]
+        rtype = route.get("type", "open")
+        rkey = _sm_route_key(rf, rt)
+        x1, y1 = _sm_node_pos(rf)
+        x2, y2 = _sm_node_pos(rt)
+
+        # Shorten lines so they stop at node edges
+        dx, dy = x2 - x1, y2 - y1
+        length = math.hypot(dx, dy)
+        if length > 0:
+            ux, uy = dx / length, dy / length
+            inset = node_size + 2
+            lx1, ly1 = x1 + ux * inset, y1 + uy * inset
+            lx2, ly2 = x2 - ux * inset, y2 - uy * inset
+        else:
+            lx1, ly1, lx2, ly2 = x1, y1, x2, y2
+
+        is_selected = selected_type == "route" and selected_id == rkey
+        sel_cls = ' class="sm-selected"' if is_selected else ''
+
+        dash = ' stroke-dasharray="6 4"' if rtype == "hidden" else ""
+
+        parts.append(
+            f'<g data-sm-route="{rkey}"{sel_cls}>'
+            f'<line x1="{lx1:.1f}" y1="{ly1:.1f}" x2="{lx2:.1f}" y2="{ly2:.1f}" class="sm-route-hit"/>'
+            f'<line x1="{lx1:.1f}" y1="{ly1:.1f}" x2="{lx2:.1f}" y2="{ly2:.1f}" '
+            f'stroke="var(--color-base-content)" class="sm-route" opacity="0.5"{dash}/>'
+        )
+
+        # X mark for closed routes
+        if rtype == "closed":
+            mx, my = (lx1 + lx2) / 2, (ly1 + ly2) / 2
+            parts.append(
+                f'<line x1="{mx - 5}" y1="{my - 5}" x2="{mx + 5}" y2="{my + 5}" '
+                f'stroke="var(--color-base-content)" stroke-width="2" opacity="0.6"/>'
+                f'<line x1="{mx + 5}" y1="{my - 5}" x2="{mx - 5}" y2="{my + 5}" '
+                f'stroke="var(--color-base-content)" stroke-width="2" opacity="0.6"/>'
+            )
+
+        parts.append('</g>')
+
+    # ── Entrances ──
+    for ent in entrances:
+        eidx = ent["node"]
+        etype = ent.get("type", "visible")
+        if eidx < 1 or eidx > 6:
+            continue
+        # Arrow from outside hex toward the node
+        angle = math.radians(-90 + (eidx - 1) * 60)
+        ox = _SM_CX + _SM_R * 1.35 * math.cos(angle)
+        oy = _SM_CY + _SM_R * 1.35 * math.sin(angle)
+        # Arrow tip near the node
+        tx = _SM_CX + _SM_R * 1.1 * math.cos(angle)
+        ty = _SM_CY + _SM_R * 1.1 * math.sin(angle)
+
+        is_selected = selected_type == "entrance" and selected_id == str(eidx)
+        sel_cls = ' class="sm-selected"' if is_selected else ''
+
+        dash = ' stroke-dasharray="4 3"' if etype == "hidden" else ""
+        parts.append(
+            f'<g data-sm-entrance="{eidx}"{sel_cls}>'
+            f'<line x1="{ox:.1f}" y1="{oy:.1f}" x2="{tx:.1f}" y2="{ty:.1f}" '
+            f'stroke="transparent" stroke-width="12" pointer-events="stroke" cursor="pointer"/>'
+            f'<line x1="{ox:.1f}" y1="{oy:.1f}" x2="{tx:.1f}" y2="{ty:.1f}" '
+            f'stroke="var(--color-base-content)" class="sm-entrance-arrow" opacity="0.6"{dash}/>'
+        )
+        # Arrowhead
+        arr_angle = math.atan2(ty - oy, tx - ox)
+        a1 = arr_angle + math.radians(150)
+        a2 = arr_angle - math.radians(150)
+        ah_len = 8
+        parts.append(
+            f'<line x1="{tx:.1f}" y1="{ty:.1f}" '
+            f'x2="{tx + ah_len * math.cos(a1):.1f}" y2="{ty + ah_len * math.sin(a1):.1f}" '
+            f'stroke="var(--color-base-content)" stroke-width="2" opacity="0.6"{dash}/>'
+            f'<line x1="{tx:.1f}" y1="{ty:.1f}" '
+            f'x2="{tx + ah_len * math.cos(a2):.1f}" y2="{ty + ah_len * math.sin(a2):.1f}" '
+            f'stroke="var(--color-base-content)" stroke-width="2" opacity="0.6"{dash}/>'
+        )
+        parts.append('</g>')
+
+    # ── Nodes ──
+    for idx in range(7):
+        x, y = _sm_node_pos(idx)
+        sidx = str(idx)
+        node = nodes.get(sidx)
+
+        is_selected = selected_type == "node" and selected_id == sidx
+        is_route_from = route_from == idx
+
+        if node:
+            ntype = node.get("type", "feature")
+            sel_cls = ""
+            if is_selected:
+                sel_cls = " sm-selected"
+            elif is_route_from:
+                sel_cls = " sm-route-from"
+
+            parts.append(f'<g data-sm-node="{idx}" class="sm-node{sel_cls}">')
+
+            if ntype == "feature":
+                parts.append(
+                    f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{node_size}" '
+                    f'fill="var(--color-primary)" opacity="0.7" class="sm-node-shape"/>'
+                )
+            elif ntype == "danger":
+                s = node_size * 1.2
+                pts = f"{x:.1f},{y - s:.1f} {x - s * 0.866:.1f},{y + s * 0.5:.1f} {x + s * 0.866:.1f},{y + s * 0.5:.1f}"
+                parts.append(
+                    f'<polygon points="{pts}" '
+                    f'fill="var(--color-error)" opacity="0.7" class="sm-node-shape"/>'
+                )
+            elif ntype == "treasure":
+                s = node_size * 1.1
+                pts = f"{x:.1f},{y - s:.1f} {x + s:.1f},{y:.1f} {x:.1f},{y + s:.1f} {x - s:.1f},{y:.1f}"
+                parts.append(
+                    f'<polygon points="{pts}" '
+                    f'fill="var(--color-warning)" opacity="0.7" class="sm-node-shape"/>'
+                )
+
+            parts.append(f'<text x="{x:.1f}" y="{y:.1f}" class="sm-label" opacity="0.8">{idx}</text>')
+            parts.append('</g>')
+        elif edit_mode:
+            sel_cls = " sm-route-from" if is_route_from else ""
+            parts.append(
+                f'<g data-sm-empty-node="{idx}" class="{sel_cls}">'
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{node_size * 0.7}" class="sm-empty"/>'
+                f'<text x="{x:.1f}" y="{y:.1f}" class="sm-label">{idx}</text>'
+                f'</g>'
+            )
+        else:
+            parts.append(f'<text x="{x:.1f}" y="{y:.1f}" class="sm-label">{idx}</text>')
+
+    parts.append('</svg>')
+    return Markup('\n'.join(parts))

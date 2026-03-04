@@ -1,5 +1,13 @@
 /* Alive - functional styles (DaisyUI handles visual styling) */
 
+/* Reduce default DaisyUI rounding globally (DaisyUI 5 variable names) */
+:root,
+[data-theme] {
+    --radius-box: 0.25rem;
+    --radius-field: 0.25rem;
+    --radius-selector: 0.125rem;
+}
+
 
 /* Drag handle cursor */
 .drag-handle {

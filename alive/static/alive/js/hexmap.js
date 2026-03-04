@@ -121,3 +121,94 @@ window.Hooks.HexMap = {
         };
     }
 };
+
+/**
+ * SiteMap hook: click delegation for site map SVG elements.
+ * Handles data-sm-node, data-sm-route, data-sm-entrance, data-sm-empty-node.
+ */
+window.Hooks.SiteMap = {
+    mounted() {
+        this._bindClick();
+        this._bindKeydown();
+    },
+    updated() {
+        this._bindClick();
+    },
+    destroyed() {
+        if (this._smHandler) {
+            this.el.removeEventListener('click', this._smHandler);
+        }
+        if (this._smKeyHandler) {
+            document.removeEventListener('keydown', this._smKeyHandler);
+        }
+    },
+    _bindClick() {
+        if (this._smHandler) {
+            this.el.removeEventListener('click', this._smHandler);
+        }
+        var hook = this;
+        this._smHandler = function(e) {
+            var el = e.target;
+            while (el && el !== hook.el) {
+                if (el.hasAttribute('data-sm-node')) {
+                    hook.pushEvent('site_map_click', {
+                        type: 'node',
+                        id: el.getAttribute('data-sm-node')
+                    });
+                    return;
+                }
+                if (el.hasAttribute('data-sm-empty-node')) {
+                    hook.pushEvent('site_map_click', {
+                        type: 'empty_node',
+                        id: el.getAttribute('data-sm-empty-node')
+                    });
+                    return;
+                }
+                if (el.hasAttribute('data-sm-route')) {
+                    hook.pushEvent('site_map_click', {
+                        type: 'route',
+                        id: el.getAttribute('data-sm-route')
+                    });
+                    return;
+                }
+                if (el.hasAttribute('data-sm-entrance')) {
+                    hook.pushEvent('site_map_click', {
+                        type: 'entrance',
+                        id: el.getAttribute('data-sm-entrance')
+                    });
+                    return;
+                }
+                el = el.parentNode;
+            }
+        };
+        this.el.addEventListener('click', this._smHandler);
+    },
+    _bindKeydown() {
+        var hook = this;
+        this._smKeyHandler = function(e) {
+            var editing = hook.el.querySelector('input:focus, textarea:focus');
+            if (e.key === 'Escape') {
+                if (editing) {
+                    // Cancel the current field edit
+                    e.preventDefault();
+                    e.stopPropagation();
+                    hook.pushEvent('site_map_cancel_edit', {});
+                } else if (hook.el.querySelector('[data-sm-edit-mode]')) {
+                    // In edit mode but not editing a field — exit edit mode
+                    e.preventDefault();
+                    e.stopPropagation();
+                    hook.pushEvent('toggle_site_map_edit', {});
+                } else {
+                    // View mode — close modal
+                    hook.pushEvent('close_site_map', {});
+                }
+                return;
+            }
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && editing) {
+                e.preventDefault();
+                hook.pushEvent('site_map_save_edit', {});
+            }
+        };
+        document.addEventListener('keydown', this._smKeyHandler);
+    }
+};
