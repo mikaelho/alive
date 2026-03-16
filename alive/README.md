@@ -83,6 +83,36 @@ AliveConf(
 )
 ```
 
+## Extension Hooks
+
+Alive is a **generic** CRUD framework. App-specific behavior belongs in the consuming application, not in alive. Use hooks on `AliveConf` to extend behavior:
+
+```python
+AliveConf(
+    fields=("name",),
+    event_handler=my_event_handler,        # async (event, payload, socket) -> bool
+    mount_hook=my_mount_hook,              # async (socket, session) -> None
+    params_hook=my_params_hook,            # async (socket, url, params) -> None
+    refresh_hook=my_refresh_hook,          # async (socket) -> None
+    info_hook=my_info_hook,               # async (event, socket) -> None
+    disconnect_hook=my_disconnect_hook,    # async (socket) -> None
+    extra_subscriptions=my_subscriptions,  # async (socket) -> list[str]
+    post_create_hook=my_post_create,      # async (socket, item) -> None
+)
+```
+
+Hooks can set dynamic attributes on `socket.context` — these are automatically included in template variables alongside declared dataclass fields.
+
+### Custom Templates
+
+Pass `template_dirs` to `setup_alive()` to override alive's default templates:
+
+```python
+setup_alive(app, url_prefix="/alive", template_dirs=["/path/to/app/templates"])
+```
+
+App template directories are searched before alive's defaults, so you can override `frame_top.html`, `frame_bottom.html`, or provide custom model templates.
+
 ## Requirements
 
 - Python 3.11+

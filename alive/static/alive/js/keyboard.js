@@ -23,39 +23,27 @@ function initKeyboardShortcuts() {
                 }
             }
 
-            // Check for field edit mode (including map detail edits)
+            // Check for field edit mode
             const activeEl = document.activeElement;
             const fieldEdit = activeEl ? activeEl.closest('.field-edit') : null;
             if (fieldEdit) {
                 e.preventDefault();
                 e.stopPropagation();
-                const cancelBtn = fieldEdit.querySelector('button[phx-click="cancel_edit"], button[phx-click="cancel_inline_target_edit"], button[phx-click="map_cancel_edit"]');
+                const cancelBtn = fieldEdit.querySelector('button[phx-click="cancel_edit"], button[phx-click="cancel_inline_target_edit"]');
                 if (cancelBtn) {
                     cancelBtn.click();
                     return;
                 }
             }
 
-            // Check for create form (including map create)
+            // Check for create form
             const createForm = document.querySelector('.create-form');
             if (createForm) {
                 e.preventDefault();
                 e.stopPropagation();
-                const cancelBtn = createForm.querySelector('button[phx-click="cancel_create"], button[phx-click="map_cancel_create"]');
+                const cancelBtn = createForm.querySelector('button[phx-click="cancel_create"]');
                 if (cancelBtn) {
                     cancelBtn.click();
-                    return;
-                }
-            }
-
-            // Check for map detail popup (close with Escape)
-            const mapDetail = document.querySelector('.map-detail-popup');
-            if (mapDetail) {
-                e.preventDefault();
-                e.stopPropagation();
-                const closeBtn = mapDetail.querySelector('button[phx-click="close_map_detail"]');
-                if (closeBtn) {
-                    closeBtn.click();
                     return;
                 }
             }
@@ -114,9 +102,9 @@ function initKeyboardShortcuts() {
                 const fieldEdit = activeEl.closest('.field-edit');
                 const createForm = activeEl.closest('.create-form');
                 const saveBtn = fieldEdit
-                    ? fieldEdit.querySelector('button[phx-click="save_edit"], button[phx-click="save_inline_target_edit"], button[phx-click="map_save_edit"]')
+                    ? fieldEdit.querySelector('button[phx-click="save_edit"], button[phx-click="save_inline_target_edit"]')
                     : createForm
-                    ? createForm.querySelector('button[phx-click="save_create"], button[phx-click="map_save_create"], button[type="submit"]')
+                    ? createForm.querySelector('button[phx-click="save_create"], button[type="submit"]')
                     : null;
 
                 if (saveBtn) {

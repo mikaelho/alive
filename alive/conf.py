@@ -38,6 +38,16 @@ class AliveConf:
     template: str | None = None
     visible_to: Callable[[Any], bool] | None = None
     filter_queryset: Callable[[Any, Any], Any] | None = None
+    # Extension hooks for app-specific behavior
+    event_handler: Callable | None = None        # async (event, payload, socket) -> bool
+    mount_hook: Callable | None = None           # async (socket, session) -> None
+    params_hook: Callable | None = None          # async (socket, url, params) -> None
+    refresh_hook: Callable | None = None         # async (socket) -> None
+    info_hook: Callable | None = None            # async (event, socket) -> None
+    disconnect_hook: Callable | None = None      # async (socket) -> None
+    extra_subscriptions: Callable | None = None  # async (socket) -> list[str]
+    post_create_hook: Callable | None = None     # async (socket, item) -> None
+    context_class: type | None = None            # Subclass of ModelContext with extra fields
 
     def get_editable_fields(self) -> Sequence[str]:
         """Get editable fields, defaulting to fields minus common non-editable ones."""

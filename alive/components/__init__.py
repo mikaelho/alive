@@ -8,6 +8,7 @@ from .editable_field import (
     DataStore,
 )
 from .item import ItemMixin, render_item_data
+from .theme import render_theme_picker, render_theme_script
 
 __all__ = [
     "EditableFieldMixin",
@@ -17,4 +18,6 @@ __all__ = [
     "DataStore",
     "ItemMixin",
     "render_item_data",
+    "render_theme_picker",
+    "render_theme_script",
 ]

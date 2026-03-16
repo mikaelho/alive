@@ -41,8 +41,9 @@ from .components import (
     ItemMixin,
     render_field_data,
     render_item_data,
+    render_theme_picker,
+    render_theme_script,
 )
-from .ui import render_theme_picker, render_theme_script, render_rating
 
 # Cache-busting token, set at import time so it changes on every server restart
 CACHE_BUST = str(int(_time.time()))
@@ -81,7 +82,7 @@ def static_url(path: str) -> str:
     return f"{path}?v={CACHE_BUST}"
 
 
-def setup_alive(app, url_prefix: str = "/alive", frame_context_provider=None):
+def setup_alive(app, url_prefix: str = "/alive", frame_context_provider=None, template_dirs=None):
     """
     Set up Alive for a PyView application.
 
@@ -95,6 +96,7 @@ def setup_alive(app, url_prefix: str = "/alive", frame_context_provider=None):
         app: The PyView application instance
         url_prefix: URL prefix for alive routes (default: "/alive")
         frame_context_provider: Async callable(session) -> dict providing frame data
+        template_dirs: Additional template directories to search (checked before alive's defaults)
     """
     global _registered_models, _frame_context_provider
     from django.apps import apps
@@ -103,7 +105,12 @@ def setup_alive(app, url_prefix: str = "/alive", frame_context_provider=None):
 
     # Configure Ibis template loader for {% extends %} and {% include %}
     template_dir = str(Path(__file__).parent / "templates")
-    ibis.loader = FileReloader(template_dir)
+    if template_dirs:
+        from .template_loader import MultiDirReloader
+        dirs = [str(d) for d in template_dirs] + [template_dir]
+        ibis.loader = MultiDirReloader(dirs)
+    else:
+        ibis.loader = FileReloader(template_dir)
 
     # Store frame context provider for use by views
     _frame_context_provider = frame_context_provider
@@ -163,7 +170,6 @@ __all__ = [
     "get_registered_models",
     "render_theme_picker",
     "render_theme_script",
-    "render_rating",
     "collect_static",
     "static_url",
     "CACHE_BUST",
