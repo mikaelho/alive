@@ -279,6 +279,18 @@
         <button class="btn btn-sm btn-primary" phx-click="keeper_start_create">+ New</button>
         <button class="btn btn-sm btn-ghost" phx-click="keeper_cancel_add">Cancel</button>
     </div>
+    {% for group in keeper_player_card_groups %}
+    <div class="mt-3">
+        <h4 class="text-xs text-base-content/50 uppercase font-semibold mb-1">{{group.character_name}}</h4>
+        <div class="flex flex-wrap gap-2">
+            {% for card in group.cards %}
+            <button class="btn btn-sm btn-outline" phx-click="keeper_add_card" phx-value-card_id="{{card.id}}">
+                {{card.name}} ({{card.level}})
+            </button>
+            {% endfor %}
+        </div>
+    </div>
+    {% endfor %}
     {% endif %}
 </div>
 {% else %}

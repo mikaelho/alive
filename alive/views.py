@@ -150,6 +150,7 @@ class ModelContext:
     is_keeper: bool = False
     keeper_character_id: int | None = None
     keeper_available_cards: list[dict] = field(default_factory=list)
+    keeper_player_card_groups: list[dict] = field(default_factory=list)
     keeper_adding: bool = False
     keeper_creating: bool = False
     # Map state
@@ -597,24 +598,44 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
 
                     situation_id = socket.context.hand_active_situation_id
                     keeper_char_id = socket.context.keeper_character_id
-                    if situation_id and keeper_char_id:
+                    if situation_id:
                         from asgiref.sync import sync_to_async as _sta_ksc
 
                         @_sta_ksc(thread_sensitive=False)
                         def _link_card():
                             CharacterCard = _apps_ksc.get_model('cards', 'CharacterCard')
                             Situation = _apps_ksc.get_model('cards', 'Situation')
+                            Character = _apps_ksc.get_model('cards', 'Character')
                             sit = Situation.objects.get(pk=situation_id)
                             if sit.dice:
-                                return
+                                return None
+                            # Auto-create keeper character if needed
+                            char_id = keeper_char_id
+                            if not char_id:
+                                player_id = socket.context.player_id
+                                if not player_id or not isinstance(player_id, int):
+                                    return None
+                                game = sit.game
+                                sheet = game.template.sheets.first()
+                                if not sheet:
+                                    return None
+                                char, _created = Character.objects.get_or_create(
+                                    player_id=player_id,
+                                    game=game,
+                                    defaults={"name": "Keeper", "sheet": sheet},
+                                )
+                                char_id = char.pk
                             cc = CharacterCard.objects.create(
-                                character_id=keeper_char_id,
+                                character_id=char_id,
                                 card=card,
                                 level=4,
                             )
                             sit.cards.add(cc)
+                            return char_id
 
-                        await _link_card()
+                        result_char_id = await _link_card()
+                        if result_char_id and not keeper_char_id:
+                            socket.context.keeper_character_id = result_char_id
 
                     socket.context.creating = False
                     socket.context.keeper_creating = False
@@ -3200,24 +3221,53 @@ def create_model_liveview(model: Type[models.Model], url_prefix: str = "/alive")
                 socket.context.map_situation_active = not resolved
 
             # Load keeper's available cards for the picker
-            if socket.context.is_keeper and socket.context.keeper_character_id and not dice:
+            if socket.context.is_keeper and not dice:
                 keeper_char_id = socket.context.keeper_character_id
 
                 @_sta(thread_sensitive=False)
                 def _fetch_keeper_cards():
                     CharacterCard = apps.get_model('cards', 'CharacterCard')
+                    Character = apps.get_model('cards', 'Character')
+                    GameMembership = apps.get_model('cards', 'GameMembership')
                     situation_card_pks = set(
                         active.cards.values_list('pk', flat=True)
                     ) if active else set()
-                    return [
-                        {"id": str(cc.pk), "name": cc.card.name, "level": cc.level}
-                        for cc in CharacterCard.objects.filter(
-                            character_id=keeper_char_id
-                        ).select_related('card')
-                        if cc.pk not in situation_card_pks
-                    ]
+                    # Keeper's own cards
+                    keeper_cards = []
+                    if keeper_char_id:
+                        keeper_cards = [
+                            {"id": str(cc.pk), "name": cc.card.name, "level": cc.level}
+                            for cc in CharacterCard.objects.filter(
+                                character_id=keeper_char_id
+                            ).select_related('card')
+                            if cc.pk not in situation_card_pks
+                        ]
+                    # Fetch player character cards grouped by character
+                    player_groups = []
+                    player_member_ids = GameMembership.objects.filter(
+                        game_id=active.game_id, role="player"
+                    ).values_list('player_id', flat=True)
+                    player_chars = Character.objects.filter(
+                        game_id=active.game_id, player_id__in=player_member_ids
+                    ).order_by('name')
+                    for char in player_chars:
+                        char_cards = [
+                            {"id": str(cc.pk), "name": cc.card.name, "level": cc.level}
+                            for cc in CharacterCard.objects.filter(
+                                character_id=char.pk
+                            ).select_related('card')
+                            if cc.pk not in situation_card_pks
+                        ]
+                        if char_cards:
+                            player_groups.append({
+                                "character_name": char.name,
+                                "cards": char_cards,
+                            })
+                    return keeper_cards, player_groups
 
-                socket.context.keeper_available_cards = await _fetch_keeper_cards()
+                keeper_cards, player_groups = await _fetch_keeper_cards()
+                socket.context.keeper_available_cards = keeper_cards
+                socket.context.keeper_player_card_groups = player_groups
 
         async def _commit_river(self, socket: LiveViewSocket[ModelContext]):
             """Save the current in-progress river to the database."""
