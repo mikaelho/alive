@@ -250,6 +250,11 @@
                                         <div class="prose prose-sm text-xs mt-1">{{related.target_notes_html}}</div>
                                         {% endif %}
                                     </div>
+                                    {% if related.actions %}
+                                    {% for action in related.actions %}
+                                    <button class="{{action.css}}" phx-click="{{action.event}}" phx-value-{{action.value_key}}="{{related.id}}" title="{{action.title}}">{{action.label}}</button>
+                                    {% endfor %}
+                                    {% endif %}
                                     <button class="btn btn-ghost btn-xs p-0 min-h-0 h-auto" phx-click="remove_inline_item" phx-value-through_pk="{{related.id}}">&times;</button>
                                 </div>
                                 {% if related.level %}
